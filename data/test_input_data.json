@@ -1,0 +1,32 @@
+{
+  "test_case_1": {
+    "highlight_message": "정기검진의 중요성과 조기 발견의 필요성",
+    "initial_condition": "환자는 1년 전 마지막 검진 이후 별다른 증상이 없었으나, 정기검진을 위해 내원. 엑스레이 촬영 결과 왼쪽 두 번째 작은 어금니에 2차 우식 발견",
+    "initial_photos": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "treatment_highlight": "신경치료를 통한 자연치아 보존의 중요성",
+    "treatment_photos": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "outcome_highlight": "조기 발견으로 인한 치료 성공과 예방의 중요성",
+    "outcome_photos": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "additional_notes": "6개월마다 정기검진과 스케일링의 중요성을 강조하고, 조기 치료가 더 큰 문제를 방지할 수 있는 가장 좋은 방법임을 환자에게 전달"
+  },
+  "test_case_2": {
+    "highlight_message": "충치 치료의 단계별 과정과 신경치료의 필요성",
+    "initial_condition": "환자는 왼쪽 어금니가 시리다고 호소하며 내원. 기존 보철물 아래로 충치가 진행되어 신경까지 감염된 상태",
+    "initial_photos": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "treatment_highlight": "정밀한 진단과 단계별 치료 과정",
+    "treatment_photos": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "outcome_highlight": "신경치료 후 크라운 보철로 치아 보호",
+    "outcome_photos": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "additional_notes": "정기검진의 중요성과 조기 발견의 필요성을 강조하며, 자연치아 보존의 중요성을 환자에게 설명"
+  },
+  "test_case_3": {
+    "highlight_message": "임플란트 치료의 단계별 과정과 중요성",
+    "initial_condition": "환자는 오래된 틀니로 인한 불편함을 호소하며 내원. 상악 전치부 4개 치아 결손으로 인한 기능적, 심미적 문제",
+    "initial_photos": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "treatment_highlight": "정밀한 진단과 단계별 임플란트 치료 과정",
+    "treatment_photos": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "outcome_highlight": "임플란트 치료 후 기능적, 심미적 개선",
+    "outcome_photos": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "additional_notes": "임플란트 치료의 장점과 주의사항을 설명하며, 정기 관리의 중요성을 강조"
+  }
+} 
