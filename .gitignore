@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+
+# 환경 설정
+.env
+*.env
+*.ini
+
+# 가상환경
+seper_env/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 로그 및 캐시
+*.log
+*.jsonl
+logs/
+test_logs/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db

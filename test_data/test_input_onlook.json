@@ -1,0 +1,145 @@
+{
+  "test_case_1": {
+    "category": "정기검진",
+    "question1_concept": "정기검진의 중요성과 조기 발견의 필요성",
+    "question2_condition": "환자는 1년 전 마지막 검진 이후 별다른 증상이 없었으나, 정기검진을 위해 내원. 엑스레이 촬영 결과 왼쪽 두 번째 작은 어금니에 2차 우식 발견",
+    "question3_visit_photo": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "question4_treatment": "신경치료를 통한 자연치아 보존의 중요성",
+    "question5_therapy_photo": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "question6_result": "조기 발견으로 인한 치료 성공과 예방의 중요성",
+    "question7_result_photo": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "question8_extra": "6개월마다 정기검진과 스케일링의 중요성을 강조하고, 조기 치료가 더 큰 문제를 방지할 수 있는 가장 좋은 방법임을 환자에게 전달"
+  },
+  "test_case_2": {
+    "category": "신경치료",
+    "question1_concept": "충치 치료의 단계별 과정과 신경치료의 필요성",
+    "question2_condition": "환자는 왼쪽 어금니가 시리다고 호소하며 내원. 기존 보철물 아래로 충치가 진행되어 신경까지 감염된 상태",
+    "question3_visit_photo": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "question4_treatment": "정밀한 진단과 단계별 치료 과정",
+    "question5_therapy_photo": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "question6_result": "신경치료 후 크라운 보철로 치아 보호",
+    "question7_result_photo": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "question8_extra": "정기검진의 중요성과 조기 발견의 필요성을 강조하며, 자연치아 보존의 중요성을 환자에게 설명"
+  },
+  "test_case_3": {
+    "category": "임플란트",
+    "question1_concept": "임플란트 치료의 단계별 과정과 중요성",
+    "question2_condition": "환자는 오래된 틀니로 인한 불편함을 호소하며 내원. 상악 전치부 4개 치아 결손으로 인한 기능적, 심미적 문제",
+    "question3_visit_photo": "SE-63619772-8aca-442a-941d-7ff7da78f1ee.jpg",
+    "question4_treatment": "정밀한 진단과 단계별 임플란트 치료 과정",
+    "question5_therapy_photo": "SE-ce838084-8f93-4085-b846-c5d4a75da653.jpg,SE-dd259479-cc29-4aed-b7bc-fc1ff39e7633.jpg",
+    "question6_result": "임플란트 치료 후 기능적, 심미적 개선",
+    "question7_result_photo": "SE-f77b8e24-0850-428b-b6e5-143854bf0dd2.jpg",
+    "question8_extra": "임플란트 치료의 장점과 주의사항을 설명하며, 정기 관리의 중요성을 강조"
+  },
+  "test_case_4": {
+    "category": "사랑니 발치",
+    "question1_concept": "사랑니 발치 전 정확한 진단의 중요성",
+    "question2_condition": "환자는 오른쪽 아래 어금니 뒤쪽 통증으로 내원. 엑스레이 결과 매복된 사랑니가 인접 치아를 누르고 있음",
+    "question3_visit_photo": "SE-8493a2ff-b789-4c84-98c1-fake001.jpg",
+    "question4_treatment": "매복 사랑니 발치 및 주변 염증 부위 소독",
+    "question5_therapy_photo": "SE-therapy-photo1.jpg,SE-therapy-photo2.jpg",
+    "question6_result": "통증 해소 및 인접 치아 손상 방지",
+    "question7_result_photo": "SE-result-photo1.jpg",
+    "question8_extra": "사랑니는 꼭 아프지 않더라도 정기검진 시 위치와 상태를 확인하고 필요 시 조기 발치가 중요함을 설명"
+  },
+  "test_case_5": {
+    "category": "심미보철",
+    "question1_concept": "심미 보철을 통한 자신감 회복",
+    "question2_condition": "환자는 앞니 파절로 인한 외모 스트레스로 내원",
+    "question3_visit_photo": "SE-visit-photo2.jpg",
+    "question4_treatment": "지르코니아 크라운 보철 시술",
+    "question5_therapy_photo": "SE-therapy-photo3.jpg,SE-therapy-photo4.jpg",
+    "question6_result": "자연스러운 색감과 심미성으로 외모 개선",
+    "question7_result_photo": "SE-result-photo2.jpg",
+    "question8_extra": "기능과 심미를 동시에 고려한 치료가 가능하며, 소재와 제작 방법에 따라 다양한 선택이 가능함을 안내"
+  },
+  "test_case_6": {
+    "category": "잇몸치료",
+    "question1_concept": "잇몸질환 초기 치료의 중요성",
+    "question2_condition": "환자는 잇몸 출혈과 붓기를 호소하며 내원. 잇몸염 초기 진단",
+    "question3_visit_photo": "SE-visit-photo3.jpg",
+    "question4_treatment": "스케일링 및 치주 소독 치료",
+    "question5_therapy_photo": "SE-therapy-photo5.jpg",
+    "question6_result": "염증 완화 및 출혈 감소",
+    "question7_result_photo": "SE-result-photo3.jpg",
+    "question8_extra": "잇몸질환은 자각증상이 적어 방치하기 쉬우므로 6개월마다 스케일링 및 정기검진이 필수임을 강조"
+  },
+  "test_case_7": {
+    "category": "소아치과",
+    "question1_concept": "어린이 충치 예방을 위한 실란트의 필요성",
+    "question2_condition": "8세 남아, 어금니 홈이 깊어 충치 발생 가능성이 높아 내원",
+    "question3_visit_photo": "SE-visit-photo4.jpg",
+    "question4_treatment": "어금니 홈에 예방 실란트 도포",
+    "question5_therapy_photo": "SE-therapy-photo6.jpg",
+    "question6_result": "충치 예방 및 위생 관리 용이",
+    "question7_result_photo": "SE-result-photo4.jpg",
+    "question8_extra": "치아 홈이 깊은 아이일수록 정기적인 실란트 처치와 관리가 중요함을 보호자에게 설명"
+  },
+  "test_case_8": {
+    "category": "치아미백",
+    "question1_concept": "치아 미백의 과정과 주의사항",
+    "question2_condition": "환자는 치아 착색으로 인한 외모 고민으로 내원. 평소 커피와 와인 섭취 잦음",
+    "question3_visit_photo": "SE-visit-photo5.jpg",
+    "question4_treatment": "전문가 미백제 이용한 치아 미백 시술",
+    "question5_therapy_photo": "SE-therapy-photo7.jpg",
+    "question6_result": "밝고 고른 치아 색상으로 환자 만족도 상승",
+    "question7_result_photo": "SE-result-photo5.jpg",
+    "question8_extra": "미백은 1회성 효과보다 유지관리가 중요하며, 생활습관 개선도 병행할 필요가 있음을 안내"
+  },
+  "test_case_9": {
+    "category": "충치치료",
+    "question1_concept": "충치는 조기에 발견하고 치료할수록 자연치아를 보존하고 치료 부담을 줄일 수 있습니다.",
+    "question2_condition": "어금니에 검게 변색된 부분이 있었고, 찬물을 마실 때 살짝 시린 증상이 있었습니다.",
+    "question3_visit_photo": "initial_molar_cavity.jpg",
+    "question4_treatment": "정밀 검진 후 우측 하악 어금니에 초기 충치(C1) 진단, 국소 마취 없이 충치 부위만 최소 삭제 후 치아 색과 동일한 레진으로 충전 치료를 진행했습니다.",
+    "question5_therapy_photo": "cavity_removal_stage.jpg, resin_filling_completion.jpg",
+    "question6_result": "시린 증상이 사라지고 자연치아를 완벽하게 보존하여 심미적으로도 만족스러운 결과를 얻었습니다.",
+    "question7_result_photo": "final_molar_resin_result.jpg",
+    "question8_extra": "별다른 증상이 없더라도 정기적인 치과 검진을 통해 조기에 충치를 발견하는 것이 중요합니다. 건강한 미소를 위한 환자분의 노력을 하니치과가 응원합니다!"
+  },
+  "test_case_10": {
+    "category": "임플란트",
+    "question1_concept": "임플란트는 상실된 치아를 가장 자연스럽게 대체하여 저작 기능과 심미성을 회복시키는 효과적인 치료 방법입니다.",
+    "question2_condition": "약 5년 전 발치 후 상악 구치부 치아 상실 상태로 방치되어 저작에 불편함을 겪고 계셨으며, 잇몸뼈 흡수가 일부 진행되었습니다.",
+    "question3_visit_photo": "pre_implant_upper_molar_xray.png",
+    "question4_treatment": "3D CT를 통한 정밀 진단 후 뼈이식(상악동 거상술)을 동반한 임플란트 식립 수술을 진행했습니다. 골 유착 기간을 거쳐 3개월 후 지대주 연결 및 크라운 보철물 장착으로 치료를 완료했습니다.",
+    "question5_therapy_photo": "bone_graft_implant_placement.jpg, crown_abutment_stage.jpg",
+    "question6_result": "상실된 치아가 완벽하게 재건되어 어떠한 음식도 편안하게 드실 수 있게 되었고, 자연치아와 구분하기 힘들 정도로 심미적인 결과를 얻었습니다.",
+    "question7_result_photo": "post_implant_upper_molar_final.jpg",
+    "question8_extra": "임플란트는 시술 후에도 정기적인 관리와 올바른 구강 위생 습관이 중요합니다. 저희 뤼튼치과는 환자분께서 오랫동안 임플란트를 편안하게 사용하실 수 있도록 사후 관리에도 최선을 다합니다."
+  },
+  "test_case_11": {
+    "category": "신경치료",
+    "question1_concept": "신경 치료는 손상된 치아를 발치하지 않고 보존하여 치아 본연의 기능을 유지하기 위한 필수적인 치료입니다.",
+    "question2_condition": "찬물뿐 아니라 뜨거운 물에도 통증이 심하게 나타났으며, 밤에도 잠을 이루기 힘들 정도의 극심한 통증을 호소하셨습니다. 육안으로도 큰 충치와 함께 염증 소견이 관찰되었습니다.",
+    "question3_visit_photo": "deep_cavity_pain_initial.jpg",
+    "question4_treatment": "엑스레이 및 검진 결과, 충치가 신경까지 침범하여 불가역적인 치수염 진단으로 신경 치료를 시작했습니다. 수회에 걸쳐 감염된 신경을 제거하고 소독한 뒤, MTA 충전재로 신경관을 밀봉했습니다. 이후 치아 파절을 방지하기 위해 지르코니아 크라운으로 마무리했습니다.",
+    "question5_therapy_photo": "nerve_treatment_access.jpg, post_mta_filling.jpg, zirconia_crown_prep.jpg",
+    "question6_result": "극심했던 통증이 완전히 사라지고, 발치 없이 소중한 자연치아를 보존할 수 있게 되었습니다. 튼튼한 크라운으로 치아 본연의 강도와 심미성을 회복했습니다.",
+    "question7_result_photo": "final_nerve_treatment_crown.jpg",
+    "question8_extra": "신경 치료를 받은 치아는 약해질 수 있으므로 반드시 크라운 수복으로 치아를 보호해야 합니다. 치료 후에도 정기적인 검진과 스케일링으로 구강 건강을 유지하는 것이 중요합니다."
+  },
+  "test_case_12": {
+    "category": "잇몸 치료",
+    "question1_concept": "잇몸병은 소리 없는 질병으로, 심화될 경우 치아 상실의 주범이 되므로 조기 진단과 꾸준한 관리가 필수적입니다.",
+    "question2_condition": "양치 시 잇몸 출혈이 잦았고, 잇몸이 붓고 가끔 고름이 나오는 등 만성 치주염 증상을 가지고 계셨습니다. 일부 치아는 흔들림도 보였습니다.",
+    "question3_visit_photo": "initial_periodontitis.jpg",
+    "question4_treatment": "구강 검진 및 엑스레이 판독 결과, 중등도 치주염으로 진단되어 꼼꼼한 스케일링과 잇몸 심층 소독 치료(치근 활택술)를 여러 차례에 걸쳐 진행했습니다. 필요에 따라 국소적인 항생제 투여도 병행했습니다.",
+    "question5_therapy_photo": "scaling_process.jpg, root_planing_session.jpg",
+    "question6_result": "잇몸 출혈과 부기가 현저히 줄어들고 고름도 더 이상 나오지 않게 되어 잇몸 건강을 되찾으셨습니다. 치아 흔들림도 감소하고 전반적인 구강 청결도가 개선되었습니다.",
+    "question7_result_photo": "after_periodontal_treatment.jpg",
+    "question8_extra": "잇몸병은 한 번 진행되면 완치가 어렵고 재발하기 쉽습니다. 따라서 꾸준한 정기 검진과 올바른 칫솔질, 치실 사용 등 개인위생 관리가 매우 중요합니다. 다함께 잇몸 건강을 지켜보아요!"
+  },
+  "test_case_13": {
+    "category": "치아 미백",
+    "question1_concept": "누렇게 변색된 치아는 환한 인상에 방해가 될 수 있습니다. 전문적인 치아 미백으로 밝고 자신감 있는 미소를 되찾을 수 있습니다.",
+    "question2_condition": "선천적으로 치아 색이 어두운 편이셨고, 커피나 차 섭취로 인한 착색으로 인해 전체적으로 치아가 누렇게 변색되어 있었습니다. 환한 미소를 원하셨습니다.",
+    "question3_visit_photo": "before_teeth_whitening.jpg",
+    "question4_treatment": "개인의 치아 색상과 착색 정도를 정밀 진단 후, 잇몸 보호제를 도포하고 고농도 미백제를 사용한 전문가 미백 3회 시술을 진행했습니다. 이후 유지 관리를 위해 자가 미백 키트 사용법을 안내해 드렸습니다.",
+    "question5_therapy_photo": "whitening_gel_application.jpg, LED_light_session.jpg",
+    "question6_result": "원하는 목표치 이상으로 치아 색상이 밝아져 훨씬 더 환하고 깨끗한 인상으로 변화하셨습니다. 전반적인 얼굴 인상까지 개선되는 효과를 보셨습니다.",
+    "question7_result_photo": "after_teeth_whitening_result.jpg",
+    "question8_extra": "치아 미백은 비교적 간단한 시술이지만, 효과적인 유지를 위해서는 꾸준한 관리와 착색을 유발하는 음식 섭취에 주의하는 것이 중요합니다. 하니치과가 환자분의 밝은 미소를 위해 최선을 다하겠습니다."
+  }  
+}
