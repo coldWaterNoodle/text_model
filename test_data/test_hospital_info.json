@@ -1,0 +1,52 @@
+[
+  {
+    "name": "하니치과",
+    "save_name": "hani",
+    "homepage": "https://natenclinic.com/",
+    "phone": "012-3456-7890",
+    "address": "서울특별시 강남구 테헤란로 123",
+    "map_link": "https://map.naver.com/p/directions/-/14148476.136034358,4467331.535069874,%EB%82%B4%EC%9D%B4%ED%8A%BC%EC%B9%98%EA%B3%BC%EC%9D%98%EC%9B%90,1909897189,PLACE_POI/-/car?c=15.00,0,0,0,dh",
+    "logo": "hani_logo.png",
+    "business_card": "hani_business_card.jpg"
+  },
+  {
+    "name": "스마일라인치과",
+    "save_name": "smileline",
+    "homepage": "https://www.naver.com/",
+    "phone": "010-1234-5678",
+    "address": "부산광역시 해운대구 센텀동로 12",
+    "map_link": "https://map.naver.com/v5/search/스마일라인치과/place/12345678",
+    "logo": "smileline_logo.png",
+    "business_card": "smileline_business_card.jpg"
+  },
+  {
+    "name": "연세화이트치과",
+    "save_name": "yonseiwhite",
+    "homepage": "https://www.naver.com/",
+    "phone": "02-987-6543",
+    "address": "경기도 성남시 분당구 정자일로 45",
+    "map_link": "https://map.naver.com/v5/search/연세화이트치과/place/87654321",
+    "logo": "yonseiwhite_logo.png",
+    "business_card": "yonseiwhite_business_card.jpg"
+  },
+  {
+    "name": "서울밝은치과",
+    "save_name": "seoulbright",
+    "homepage": "https://www.naver.com/",
+    "phone": "031-222-3333",
+    "address": "제주특별자치도 제주시 첨단로 99",
+    "map_link": null,
+    "logo": "seoulbright_logo.png",
+    "business_card": null
+  },
+  {
+    "name": "더좋은미소치과",
+    "save_name": "smileplus",
+    "homepage": "https://www.naver.com/",
+    "phone": "051-444-5555",
+    "address": "대구광역시 수성구 동대구로 777",
+    "map_link": "https://map.naver.com/v5/search/더좋은미소치과/place/11223344",
+    "logo": null,
+    "business_card": "smileplus_business_card.jpg"
+  }
+]
