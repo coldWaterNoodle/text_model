@@ -1,0 +1,64 @@
+당신은 치과 케이스 블로그/랜딩 기획 전문가입니다.
+아래 input_data를 바탕으로 서로 스타일/구성 다양성이 있는 plan 후보를 {num_candidates}개 생성하세요.
+각 후보는 '정확히 5개 섹션(서론/진단/치료/결과/관리)'을 갖추고, 일부 입력이 비어 있어도 모델이 합리적으로 보완해 각 섹션의 description을 채워야 합니다.
+
+[후보 수]
+- {num_candidates}개
+
+[스타일 다양성 가이드(예시)]
+- 담백/설명적/대화형/케이스저널/체계적 등으로 톤과 전개를 달리하되, 섹션 구조와 정책 준수는 동일
+
+[출력 형식]
+다음과 같은 JSON 하나로만 출력:
+{
+  "candidates": [
+    {
+      "id": "cand_1",
+      "style": "담백",
+      "diversity": "질문형 도입",
+      "plan": {  ← 단건 프롬프트의 plan JSON 규격과 동일(5섹션 완비)
+        "title": "...",
+        "summary": "...",
+        "target_audience": "...",
+        "persona_focus": "...",
+        "sections": [ { ...5 items... } ],
+        "keywords": [...],
+        "call_to_action": "...",
+        "geo_branding": {"clinic_alias":"", "region_line":""},
+        "meta_panel": {"address":"", "phone":"", "homepage":"", "map_link":"", "treatment_period":""},
+        "link_policy": {"homepage_in_body_once": true, "map_in_footer_only": true}
+      },
+      "adherence": {
+        "score_0_100": 90,
+        "reason_summary": "섹션5·링크정책 준수",
+        "violations": [],
+        "notes": []
+      }
+    },
+    ... {num_candidates}개
+  ]
+}
+
+[입력: input_data]
+- 병원: 이름={hospital_name}, 주소={hospital_address}, 전화={hospital_phone}, 홈페이지={hospital_homepage}, 지도링크={hospital_map_link}
+- 지역: city={city}, district={district}, region_phrase={region_phrase}
+- 카테고리: {category}
+- 페르소나: 대표={representative_persona}, 후보={persona_candidates}, 선택={selected_personas}
+- 임상 Q&A:
+  Q1(개념/핵심): {clinical_stages_initial_assessment_concept}
+  Q2(상태/검사): {clinical_stages_initial_assessment_condition}
+  Q4(치료 내용): {clinical_stages_treatment_process_content}
+  Q6(결과/예후): {clinical_stages_treatment_outcome_result}
+  Q8(추가/관리): {clinical_stages_additional_info_extra}
+- 이미지 메타:
+  visit_images={visit_image_info}
+  therapy_images={therapy_image_info}
+  result_images={result_image_info}
+- 링크/브랜딩 힌트:
+  link_policy={link_policy_json}, geo_branding={geo_branding_hint}, meta_panel_hint={meta_panel_hint}
+- 기타 흐름 힌트: {content_flow}
+
+[생성 규칙(중요)]
+- 모든 후보는 5개 섹션을 ‘반드시’ 포함(제목/순서 고정).
+- 각 섹션 description은 최소 3문장 이상, 비어 있으면 안 됨.
+- Q 값이 비어도 임상 상식/합리적 추론으로
