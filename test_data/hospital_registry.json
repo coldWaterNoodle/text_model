@@ -1,0 +1,15 @@
+[
+  {
+    "name": "하니치과",
+    "save_name": "hani",
+    "homepage": "https://natenclinic.com/",
+    "phone": "012-3456-7890",
+    "address": "서울특별시 강남구 테헤란로 123",
+    "map_link": "https://map.naver.com/p/directions/-/14148476.136034358,4467331.535069874,%EB%82%B4%EC%9D%B4%ED%8A%BC%EC%B9%98%EA%B3%BC%EC%9D%98%EC%9B%90,1909897189,PLACE_POI/-/car?c=15.00,0,0,0,dh",
+    "logo": "hani_logo.png",
+    "business_card": "hani_business_card.jpg",
+    "city": "서울",
+    "district": "서울특별시",
+    "region_phrase": "서울 서울특별시권"
+  }
+]

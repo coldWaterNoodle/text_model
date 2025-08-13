@@ -1,577 +1,757 @@
 # agents/content_agent.py
 # -*- coding: utf-8 -*-
 """
-ContentAgent (7개 섹션 프롬프트 + 취합 스티처)
-- 입력: 최신 *_input_log.json / *_plan_log.json / *_title_log.json
-- 섹션: content1~7_*_prompt.txt 각각 호출 → 섹션별 후보 생성(JSON) → 섹션별 최종 선택(JSON)
-- 스티치: content_stitch_prompt.txt 로 7개 섹션을 한 편으로 통합(중복 제거·흐름 정리)
-- 후처리: 타 병원/의사명 제거, 금지어 필터, homepage 링크 1회, 안내 박스 1회 유지
-- 출력/저장:
-  - *_content_sections_log.json (섹션별 후보/선정 원본)
-  - *_content_log.json          (최종 합본/컨텍스트 메타)
-  - *_content.md                (최종 마크다운)
-  - *_content_full.txt          (TITLE + 최종 마크다운)
+ContentAgent (7섹션 · 프롬프트 기반 · 이미지 바인딩 해석 · 의료광고 필터 · 로그 저장)
+- 입력: 최신 input/plan/title 결과 자동 탐색 또는 경로 지정
+- 프롬프트: test_prompt/content{1..7}_*.txt
+- 모델: Gemini (GEMINI_API_KEY 필요)
+- 저장:
+    - 결과: test_logs/{mode}/{YYYYMMDD}/{timestamp}_content.json
+    - 로그 : test_logs/{mode}/{YYYYMMDD}/{timestamp}_content_log.json
+    - TXT : test_logs/{mode}/{YYYYMMDD}/{timestamp}_title_content_result.txt
 """
 
-import os, sys, re, json, textwrap
+from __future__ import annotations
+
+import os, re, json, time
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import google.generativeai as genai
 from dotenv import load_dotenv
+import google.generativeai as genai
 
-# ---------------- 기본 세팅 ----------------
+# =========================
+# 환경설정 / 모델
+# =========================
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
     raise RuntimeError("GEMINI_API_KEY가 필요합니다(.env)")
 genai.configure(api_key=API_KEY)
 
-sys.path.append(str(Path(".").resolve()))
-
-# ---------------- 유틸 ----------------
-def now_str() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-def read_json(p: Path) -> Any:
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def write_json(p: Path, data: Any) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def read_text(p: Path) -> str:
-    return p.read_text(encoding="utf-8")
-
-def latest_file_by_mtime(dir_: Path, pattern: str) -> Optional[Path]:
-    files = list(dir_.glob(pattern))
-    if not files:
-        return None
-    files.sort(key=lambda p: p.stat().st_mtime)
-    return files[-1]
-
-def latest_input_log(dir_: Path) -> Optional[Path]:
-    return latest_file_by_mtime(dir_, "*_input_log.json")
-
-def latest_plan_log(dir_: Path) -> Optional[Path]:
-    # 실제 plan 내용은 *_plan_log.json
-    return latest_file_by_mtime(dir_, "*_plan_log.json")
-
-def latest_title_log(dir_: Path) -> Optional[Path]:
-    return latest_file_by_mtime(dir_, "*_title_log.json")
-
-def _pick(*vals):
-    for v in vals:
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return ""
-
-# ---------------- JSON 추출 ----------------
-JSON_BLOCK_RE = re.compile(r"\s*```(?:json)?\s*(\{.*?\})\s*```|\s*(\{.*\})\s*", re.S)
-def extract_json(text: str) -> Dict[str, Any]:
-    if not text:
-        raise ValueError("빈 모델 응답")
-    m = JSON_BLOCK_RE.search(text)
-    blob = (m.group(1) or m.group(2)) if m else None
-    if not blob:
-        s = text.find("{")
-        if s == -1:
-            raise ValueError("JSON 시작 '{' 없음")
-        stack = 0; e = -1
-        for i, ch in enumerate(text[s:], s):
-            if ch == "{": stack += 1
-            elif ch == "}":
-                stack -= 1
-                if stack == 0:
-                    e = i + 1
-                    break
-        if e == -1:
-            raise ValueError("JSON 중괄호 불일치")
-        blob = text[s:e]
-    return json.loads(blob)
-
-# ---------------- Gemini ----------------
 class GeminiClient:
-    def __init__(self, model="gemini-1.5-pro", temperature=0.65, max_output_tokens=8192):
+    def __init__(self, model="models/gemini-1.5-flash", temperature=0.65, max_output_tokens=4096):
         self.model = model
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
-    def generate_text(self, prompt: str, temperature: Optional[float] = None) -> str:
-        m = genai.GenerativeModel(self.model)
-        resp = m.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=self.temperature if temperature is None else temperature,
-                max_output_tokens=self.max_output_tokens,
-                candidate_count=1,
-                top_p=0.95, top_k=40,
-            )
-        )
-        if getattr(resp, "text", None):
-            return resp.text
-        if getattr(resp, "candidates", None):
-            parts = getattr(resp.candidates[0].content, "parts", [])
-            if parts and getattr(parts[0], "text", ""):
-                return parts[0].text
-        raise ValueError("응답에 text 없음")
+        self.max_retries = 3
+        self.retry_delay = 1.0
 
-# ---------------- 섹션 프롬프트 7개 ----------------
-SECTION_FILES = [
-    ("intro",        "content1_intro_prompt.txt"),
-    ("visit",        "content2_visit_prompt.txt"),
-    ("inspection",   "content3_inspection_prompt.txt"),
-    ("doctor_tip",   "content4_doctor_tip_prompt.txt"),
-    ("treatment",    "content5_treatment_prompt.txt"),
-    ("check_point",  "content6_check_point_prompt.txt"),
-    ("conclusion",   "content7_conclusion_prompt.txt"),
+    def generate(self, prompt: str, temperature: Optional[float] = None) -> str:
+        for attempt in range(self.max_retries):
+            try:
+                m = genai.GenerativeModel(self.model)
+                resp = m.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=self.temperature if temperature is None else temperature,
+                        max_output_tokens=self.max_output_tokens,
+                        candidate_count=1,
+                        top_p=0.95,
+                        top_k=40,
+                    ),
+                )
+                if getattr(resp, "text", None):
+                    return resp.text
+                if getattr(resp, "candidates", None):
+                    parts = getattr(resp.candidates[0].content, "parts", [])
+                    if parts and getattr(parts[0], "text", ""):
+                        return parts[0].text
+                raise ValueError("응답에 text 없음")
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    raise
+                print(f"⚠️ Gemini 호출 실패 (시도 {attempt+1}/{self.max_retries}): {e}")
+                time.sleep(self.retry_delay * (2 ** attempt))
+
+gem = GeminiClient()
+
+# =========================
+# 유틸 (시간/경로/로딩)
+# =========================
+DEF_MODE = "use"
+
+def _today() -> str: return datetime.now().strftime("%Y%m%d")
+def _now() -> str:   return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+def _ensure_dir(p: Path): p.mkdir(parents=True, exist_ok=True)
+
+def _mtime(p: Path) -> float:
+    try: return p.stat().st_mtime
+    except Exception: return 0.0
+
+def _read(path: Path, default=""):
+    try: return path.read_text(encoding="utf-8")
+    except Exception: return default
+
+def _json_load(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def _get(d: Dict[str, Any], path: str, default=None):
+    cur = d
+    for k in path.split("."):
+        if isinstance(cur, dict) and k in cur:
+            cur = cur[k]
+        else:
+            return default
+    return cur
+
+# 최신 input 탐색 (신규/구형 모두)
+def _latest_input(mode: str) -> Tuple[Optional[Path], Optional[dict]]:
+    day = Path(f"test_logs/{mode}/{_today()}")
+    patterns = ["*_input_logs.json", "*_input_log.json"]
+    for pat in patterns:
+        hits = sorted(day.glob(pat), key=_mtime, reverse=True)
+        if hits:
+            p = hits[0]
+            try:
+                data = _json_load(p)
+                if isinstance(data, list) and data:
+                    return p, data[-1]
+                if isinstance(data, dict):
+                    return p, data
+            except Exception:
+                pass
+    root = Path(f"test_logs/{mode}")
+    if not root.exists(): return None, None
+    all_hits = sorted(list(root.rglob("*_input_logs.json")) + list(root.rglob("*_input_log.json")), key=_mtime, reverse=True)
+    if not all_hits: return None, None
+    p = all_hits[0]
+    data = _json_load(p)
+    if isinstance(data, list) and data: return p, data[-1]
+    if isinstance(data, dict): return p, data
+    return None, None
+
+def _latest_plan(mode: str) -> Optional[Path]:
+    day = Path(f"test_logs/{mode}/{_today()}")
+    hits = sorted(day.glob("*_plan.json"), key=_mtime, reverse=True)
+    if hits: return hits[0]
+    root = Path(f"test_logs/{mode}")
+    if not root.exists(): return None
+    hits = sorted(root.rglob("*_plan.json"), key=_mtime, reverse=True)
+    return hits[0] if hits else None
+
+def _latest_title(mode: str) -> Optional[Path]:
+    day = Path(f"test_logs/{mode}/{_today()}")
+    hits = sorted(day.glob("*_title.json"), key=_mtime, reverse=True)
+    if hits: return hits[0]
+    root = Path(f"test_logs/{mode}")
+    if not root.exists(): return None
+    hits = sorted(root.rglob("*_title.json"), key=_mtime, reverse=True)
+    return hits[0] if hits else None
+
+# =========================
+# 프롬프트 로딩/치환
+# =========================
+PROMPTS = {
+    "1_intro":       Path("test_prompt/content1_intro_prompt.txt"),
+    "2_visit":       Path("test_prompt/content2_visit_prompt.txt"),
+    "3_inspection":  Path("test_prompt/content3_inspection_prompt.txt"),
+    "4_doctor_tip":  Path("test_prompt/content4_doctor_tip_prompt.txt"),
+    "5_treatment":   Path("test_prompt/content5_treatment_prompt.txt"),
+    "6_check_point": Path("test_prompt/content6_check_point_prompt.txt"),
+    "7_conclusion":  Path("test_prompt/content7_conclusion_prompt.txt"),
+}
+
+### 디버그용 프롬프트 로딩
+print("프롬프트 로딩:", ", ".join(f"{k}={v.name}" for k, v in PROMPTS.items()))
+
+def _render_template(tpl: str, ctx_vars: Dict[str, Any]) -> str:
+    # 보호용: 이중 중괄호는 살림
+    L, R = "§§L§§", "§§R§§"
+    work = tpl.replace("{{", L).replace("}}", R)
+
+    # {변수}만 안전 치환
+    keys = list(ctx_vars.keys())
+    if keys:
+        pattern = re.compile(r"\{(" + "|".join(map(re.escape, keys)) + r")\}")
+        work = pattern.sub(lambda m: str(ctx_vars.get(m.group(1), "")), work)
+
+    return work.replace(L, "{{").replace(R, "}}")
+
+# =========================
+# JSON 파싱 & 텍스트 필터
+# =========================
+FORBIDDEN = [
+    r"\b100%\b", r"무통증", r"완치", r"유일", r"최고", r"즉시\s*효과", r"파격", r"이벤트", r"특가",
+    r"\d+\s*원", r"\d+\s*만원", r"가격\s*", r"전화\s*\d", r"http[s]?://", r"www\."
 ]
+FORBIDDEN_RE = re.compile("|".join(FORBIDDEN))
 
-class PromptPack:
-    def __init__(self):
-        base = Path("test_prompt")
-        if not base.exists():
-            base = Path("prompts")
-        self.dir = base
-        self.paths: Dict[str, Path] = {key: base / fname for key, fname in SECTION_FILES}
-        self.stitch_path = self.dir / "content_stitch_prompt.txt"
+def _clean_output(text: str) -> str:
+    s = (text or "").strip()
+    # 코드펜스 제거
+    s = re.sub(r"^```(markdown|text)?", "", s).strip()
+    s = re.sub(r"```$", "", s).strip()
+    # 과도한 공백 정리
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    # 금칙어 간단 마스킹(완전 삭제 대신 안전표기)
+    s = FORBIDDEN_RE.sub(lambda _: "(광고성 문구 제거)", s)
+    return s
 
-    def _fallback(self, key: str) -> str:
-        return textwrap.dedent(f"""
-        아래 '컨텍스트'를 반영해 블로그 본문의 '{key}' 섹션을 생성하세요.
-        - 의료광고법 위반 표현 금지(과장/단정/가격/비교사례/치료경험담)
-        - 줄바꿈/문장 길이/느낌표 사용은 자연스럽게
-        출력 형식(JSON 하나):
-        {{
-          "candidates": [{{"id":"cand_1","style":"...","content_markdown":"..."}}],
-          "selected": {{"id":"cand_1","why_best":"...","content_markdown":"..."}}
-        }}
+def _strip_quotes(s: str) -> str:
+    s = (s or "").strip()
+    if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")):
+        return s[1:-1]
+    return s
 
-        [컨텍스트]
-        title={{title}}
-        plan={{plan}}
-        input_data={{input_data}}
-        vars={{vars}}
-        N={{N}}
-        """).strip()
+# 동물 이미지 GIF
+import random
+GIF_DIR = Path("test_data/test_image/gif")
 
-    def load(self, key: str) -> str:
-        p = self.paths[key]
-        return read_text(p) if p.exists() else self._fallback(key)
+_EMOTICON_MARK_RE = re.compile(r"\((행복|슬픔|신남|화남|일반|마무리)\)")
+# 게시글 단위로 동물 고정 & 풀 캐시
+_SESSION: Dict[str, Any] = {"animal": None, "pool": None}
 
-    def fill(self, template: str, *, N: int, title: str, plan: Dict[str, Any],
-             input_data: Dict[str, Any], vars_: Dict[str, Any]) -> str:
-        return (template
-            .replace("{title}", json.dumps(title, ensure_ascii=False))
-            .replace("{plan}", json.dumps(plan, ensure_ascii=False))
-            .replace("{input_data}", json.dumps(input_data, ensure_ascii=False))
-            .replace("{vars}", json.dumps(vars_, ensure_ascii=False))
-            .replace("{N}", str(N)))
+def _scan_gif_pool() -> Dict[str, Dict[str, List[Path]]]:
+    """
+    pool[animal][category] = [Path, ...]
+    파일명 패턴 예: 행복_토끼.gif / 일반_햄스터3.gif / 마무리_토끼2.gif
+    """
+    pool: Dict[str, Dict[str, List[Path]]] = {}
+    if not GIF_DIR.exists():
+        return pool
+    for p in GIF_DIR.glob("*.gif"):
+        name = p.stem  # ex) 행복_토끼2
+        parts = name.split("_", 1)
+        if len(parts) < 2:
+            continue
+        category, animal_with_no = parts[0], parts[1]
+        # 숫자 접미 제거
+        animal = re.sub(r"\d+$", "", animal_with_no)
+        animal = animal.strip()
+        d = pool.setdefault(animal, {})
+        d.setdefault(category, []).append(p)
+    return pool
 
-    def stitch_template(self) -> str:
-        if self.stitch_path.exists():
-            return read_text(self.stitch_path)
-        # 안전 fallback (파일 없을 때)
-        return (
-            "당신은 대한민국 치과 블로그 전문 편집자입니다. 아래 자료를 바탕으로 "
-            "네이버 블로그용 '최종 본문(markdown 하나)'을 완성하세요.\n\n"
-            "[목표]\n"
-            "- 중복/반복/군더더기 제거, 흐름 매끄럽게 정리\n"
-            "- 페르소나 톤 유지\n"
-            "- 의료광고법 위반 표현 금지(과장/단정/가격/치료경험담/비교사진)\n"
-            "- 병원/링크 정책 준수: homepage 본문 1회만, map은 말미 안내 박스\n"
-            "- 이미지 참조 문구(사진: *)는 필요한 곳에 1회씩만\n\n"
-            "TITLE: {title}\n\n"
-            "CONTEXT(JSON):\n{context_json}\n\n"
-            "SECTIONS(JSON):\n{sections_json}\n\n"
-            "PLAN(JSON):\n{plan_json}\n\n"
-            "[출력 규칙]\n"
-            "- 마크다운 본문 하나만 출력(# 제목 포함)\n"
-            "- 인트로 1개, 결론 1개, 안내 박스는 문서 맨 끝 1회만\n"
-            "- 외부 병원/의사명 언급 금지, clinic_name 표기 일관\n"
-            "- 홈페이지 링크는 본문 중간 1회만(이미 있으면 추가 금지)\n"
-            "지금부터 최종본만 출력하세요."
-        )
+def _pick_animal_once(state: Dict[str, Any], pool: Dict[str, Dict[str, List[Path]]], preferred: Optional[str] = None) -> Optional[str]:
+    if state.get("chosen_animal"):
+        return state["chosen_animal"]
+    candidates = list(pool.keys())
+    if not candidates:
+        return None
+    if preferred and preferred in candidates:
+        state["chosen_animal"] = preferred
+        return preferred
+    # 랜덤 고정
+    animal = random.choice(candidates)
+    state["chosen_animal"] = animal
+    return animal
 
-# ---------------- 페르소나 → 가이드 ----------------
-def _persona_style(selected: List[str]) -> Dict[str, Any]:
-    s = " ".join(selected or []).lower()
-    guide = {
-        "tone": "친근하고 담백한 정보 전달",
-        "reading_aids": ["짧은 문장", "줄바꿈 자주", "목록으로 핵심 정리"],
-        "focus": "검진 필요성, 관리 요령, 과장 없는 설명",
-        "include_blocks": []
-    }
-    if "직장" in s or "바빠" in s or "워킹" in s:
-        guide.update({
-            "tone": "바쁜 직장인에게 간결하게",
-            "reading_aids": ["요약 먼저", "체크리스트", "내원 시간/횟수 명시"],
-            "focus": "진료 동선·시간·통증 관리",
-            "include_blocks": ["요약박스"]
-        })
-    if "보호자" in s or "자녀" in s or "학부모" in s:
-        guide.update({
-            "tone": "부모에게 안심 주는 설명",
-            "reading_aids": ["단계별 안내", "주의사항 강조"],
-            "focus": "아이 협조·통증·사후관리"
-        })
-    if "시니어" in s or "노년" in s:
-        guide.update({
-            "tone": "또박또박 쉬운 용어",
-            "reading_aids": ["큰 단락 구분", "용어 풀이"],
-            "focus": "복약/전신질환/의치 고려"
-        })
-    if "대학" in s or "학생" in s:
-        guide.update({
-            "tone": "친근하고 캐주얼",
-            "reading_aids": ["Q&A", "이모지 제한적 사용"],
-            "focus": "비용 언급 없이 관리 루틴/습관"
-        })
-    if "임산부" in s:
-        guide.update({
-            "tone": "안전·시기별 유의점 중심",
-            "reading_aids": ["금기/권고 구분"],
-            "focus": "방사선 노출 회피/응급 시 대처"
-        })
-    return guide
+def _pick_gif_by(animal: str, category: str, pool: Dict[str, Dict[str, List[Path]]]) -> Optional[Path]:
+    cand = (pool.get(animal, {}) or {}).get(category, [])
+    if not cand:
+        return None
+    return random.choice(cand)
 
-# ---------------- Stitcher ----------------
-class Stitcher:
-    def __init__(self, prompts: PromptPack, model="gemini-1.5-pro"):
-        self.prompts = prompts
-        self.gemini = GeminiClient(model=model)
+def _gif_pool_cached() -> Dict[str, Dict[str, List[Path]]]:
+    if _SESSION["pool"] is None:
+        _SESSION["pool"] = _scan_gif_pool()
+    return _SESSION["pool"]
 
-    def stitch(self, *, title: str, context: Dict[str, Any],
-               sections_out: Dict[str, Dict[str, Any]], plan: Dict[str, Any]) -> str:
-        sections_json = json.dumps({
-            k: (v.get("selected") or {}).get("content_markdown", "")
-            for k, v in sections_out.items()
-        }, ensure_ascii=False, indent=2)
-        tpl = self.prompts.stitch_template()
-        prompt = (
-            tpl.replace("{title}", title)
-               .replace("{context_json}", json.dumps(context, ensure_ascii=False, indent=2))
-               .replace("{sections_json}", sections_json)
-               .replace("{plan_json}", json.dumps(plan, ensure_ascii=False, indent=2))
-        )
-        raw = self.gemini.generate_text(prompt, temperature=0.55)
-        return (raw or "").strip()
+def _inject_emoticons_inline(text: str, sec_key: str) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    (행복/슬픔/놀람/신남/화남/일반/마무리) 마커를 같은 동물 GIF로 치환.
+    - 섹션 1~6: 첫 마커에서 동물 랜덤 고정. 카테고리 없으면 '일반' 폴백 허용.
+    - 섹션 7: (마무리)만 처리, '마무리_동물*' 없거나 동물 미고정이면 삽입하지 않음.
+    """
+    if not text:
+        return text, []
 
-# ---------------- ContentAgent ----------------
-class ContentAgent:
-    def __init__(self, model="gemini-1.5-pro"):
-        self.prompts = PromptPack()
-        self.gemini = GeminiClient(model=model)
+    pool = _gif_pool_cached()
+    images_log: List[Dict[str, str]] = []
 
-    # 질문 8개 유연 추출
-    def _extract_questions(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        q = {}
-        if isinstance(input_data.get("questions"), list):
-            for i, item in enumerate(input_data["questions"], 1):
-                q[f"q{i}"] = item
-        for k, v in list(input_data.items()):
-            if isinstance(k, str) and k.lower().startswith("question"):
-                q[k] = v
-        for k in [
-            "question1_concept","question2_condition","question3_visit",
-            "question4_treatment","question5_therapy","question6_result",
-            "question7_followup","question8_extra"
-        ]:
-            if k in input_data:
-                q[k] = input_data[k]
-        return q
+    def repl(m: re.Match) -> str:
+        tag = m.group(1)
 
-    # 컨텍스트 병합
-    def _build_context(self, plan: Dict[str, Any], title: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        hospital  = dict(input_data.get("hospital", {}))
-        meta      = plan.get("meta_panel", {}) or {}
-        geo       = plan.get("geo_branding", {}) or {}
-        linkpol   = plan.get("link_policy", {}) or {}
-        images_ix = input_data.get("images_index", {}) or {}
-        personas  = input_data.get("selected_personas", []) or input_data.get("persona_candidates", [])
-        persona_guide = _persona_style(personas)
-        ctx = {
-            "clinic_name": _pick(hospital.get("name"), geo.get("clinic_alias"), "하니치과"),
-            "doctor_name": "김하니",  # 내부 변수. 본문 노출 금지
-            "region_phrase": _pick(geo.get("region_line"), hospital.get("region_phrase")),
-            "address": _pick(meta.get("address"), hospital.get("address")),
-            "phone": _pick(meta.get("phone"), hospital.get("phone")),
-            "homepage": _pick(meta.get("homepage"), hospital.get("homepage")),
-            "map_link": _pick(meta.get("map_link"), hospital.get("map_link")),
-            "link_policy": linkpol,
-            "category": input_data.get("category",""),
-            "symptom": input_data.get("symptom","") or input_data.get("question2_condition",""),
-            "diagnosis": input_data.get("diagnosis",""),
-            "treatment": input_data.get("treatment","") or input_data.get("question4_treatment",""),
-            "procedure": input_data.get("procedure",""),
-            "questions": self._extract_questions(input_data),
-            "personas": personas,
-            "persona_guide": persona_guide,
-            "title": title,
-            "question3_visit_photo":   images_ix.get("question3_visit_photo",   "visit_images:0"),
-            "question5_therapy_photo": images_ix.get("question5_therapy_photo", "therapy_images:0"),
-            "question6_result_photo":  images_ix.get("question6_result_photo",  "result_images:0"),
-        }
-        return ctx
+        # 섹션7 전용 규칙
+        if sec_key == "7_conclusion":
+            if tag != "마무리":
+                return ""  # 다른 마커는 제거
+            animal = _SESSION.get("animal")
+            if not animal:
+                return ""  # 앞 섹션에서 동물 확정 안 됨 → 삽입 안 함
+            media = _pick_gif_by(animal, "마무리", pool)
+            if not media:
+                return ""  # 마무리_동물 파일 없음 → 삽입 안 함
+            alt = f"마무리 {animal} 이모티콘"
+            images_log.append({"filename": media.name, "path": str(media), "alt": alt, "position": "inline"})
+            return f"![{alt}]({str(media)})"
 
-    def _context_header(self, context: Dict[str, Any]) -> str:
-        safe = json.dumps(context, ensure_ascii=False, indent=2)
-        rules = (
-            "- CONTEXT의 clinic_name/address/homepage/map_link/link_policy/카테고리/증상·진료·치료/질문/페르소나 반영.\n"
-            "- doctor_name은 본문 노출 금지(내부 변수용).\n"
-            "- persona_guide의 tone/reading_aids를 문장 스타일과 구성에 반영.\n"
-            "- 의료광고법: 과장/단정/가격/비교사례/치료경험담 금지.\n"
-            "- homepage 링크는 link_policy.homepage_in_body_once가 true일 때 본문 1회만, map_link는 말미 안내 박스에만.\n"
-            "- 예시 속 타 병원/의사명(동탄 내이튼 치과/윤민정 등) 금지. clinic_name 표기 일관 유지.\n"
-        )
-        return f"### CONTEXT (DO NOT IGNORE)\n{safe}\n\n### RULES\n{rules}\n"
+        # 섹션 1~6: 동물 없으면 지금 랜덤 고정
+        animal = _SESSION.get("animal")
+        if not animal:
+            if not pool:
+                return ""  # 풀 비어있으면 제거
+            animal = random.choice(list(pool.keys()))
+            _SESSION["animal"] = animal
 
-    def _gen_section(self, key: str, *, title: str, plan: Dict[str, Any],
-                     input_data: Dict[str, Any], N: int) -> Dict[str, Any]:
-        tmpl = self.prompts.load(key)
-        context = self._build_context(plan, title, input_data)
-        # 예시 플레이스홀더 치환
-        for ph in ["question3_visit_photo", "question5_therapy_photo", "question6_result_photo"]:
-            tmpl = tmpl.replace(f"{{{ph}}}", context.get(ph, ""))
-        # 출력 스키마 강제
-        enforce = """
-        출력은 반드시 다음 JSON 하나로만 제공하세요:
-        {
-          "candidates":[{"id":"cand_1","style":"...","content_markdown":"..."}],
-          "selected":{"id":"cand_1","why_best":"...","content_markdown":"..."}
-        }
-        """.strip()
-        prompt_core = self.prompts.fill(tmpl + "\n\n" + enforce,
-                                        N=N, title=title, plan=plan, input_data=input_data, vars_=context)
-        prompt = self._context_header(context) + "\n" + prompt_core
-        raw = self.gemini.generate_text(prompt, temperature=0.65)
-        obj = extract_json(raw)
-        obj.setdefault("candidates", []); obj.setdefault("selected", {})
-        if not obj["selected"].get("content_markdown") and obj["candidates"]:
-            obj["selected"] = {
-                "id": obj["candidates"][0].get("id", "cand_1"),
-                "why_best": "모델 미선정 → 1순위 후보 폴백",
-                "content_markdown": obj["candidates"][0].get("content_markdown", "")
-            }
-        return obj
+        # 카테고리 선택: '마무리' 마커가 1~6에 오면 '일반'로 처리
+        desired = "일반" if tag == "마무리" else tag
+        media = _pick_gif_by(animal, desired, pool) or (None if desired == "일반" else _pick_gif_by(animal, "일반", pool))
+        if not media:
+            return ""  # 해당/일반 모두 없으면 제거
 
-    # 로컬 후처리(중복/링크/안내/금지어)
-    def _postprocess_markdown(self, md: str, context: Dict[str, Any]) -> str:
-        if not md: return md
-        clinic = context.get("clinic_name","하니치과")
+        alt = f"{desired} {animal} 이모티콘"
+        images_log.append({"filename": media.name, "path": str(media), "alt": alt, "position": "inline"})
+        return f"![{alt}]({str(media)})"
 
-        # 제목(# ) 다중 발생 시 첫 줄만 유지, 나머지는 ## 로 다운그레이드
-        lines = md.splitlines()
-        if lines and lines[0].lstrip().startswith("# "):
-            for i in range(1, len(lines)):
-                if lines[i].lstrip().startswith("# "):
-                    lines[i] = "#" + lines[i]
-        md = "\n".join(lines)
+    new_text = _EMOTICON_MARK_RE.sub(repl, text)
+    return new_text, images_log
 
-        # 타 병원/의사 제거/치환
-        md = re.sub(r"동탄\s*내이튼\s*치과", clinic, md)
-        md = re.sub(r"윤\s*민\s*정\s*원장", "", md)
+# =========================
+# [NEW] 전역 dedup/경로정규화/해시/페어링 유틸
+# =========================
+import hashlib  # [NEW]
 
-        # 과잉 공백 정리
-        md = re.sub(r"(?:\n\s*){3,}", "\n\n", md)
+def _norm_path(p: str) -> str:  # [NEW]
+    p = (p or "").strip().replace("\\", "/")
+    p = re.sub(r"[?#].*$", "", p)  # 쿼리/프래그먼트 제거
+    return p.lower()
 
-        # 이미지 참조 중복(같은 줄 반복) 제거
-        md = re.sub(r"(사진:\s*(visit|therapy|result)_images:\d+)\s*(\n\1)+", r"\1", md)
-
-        # 홈페이지 링크 1회 정책
-        homepage = context.get("homepage","")
-        if homepage:
-            occ = len(re.findall(re.escape(homepage), md))
-            if occ == 0:
-                ls = md.splitlines()
-                insert_at = min(12, len(ls))
-                ls.insert(insert_at, f"[자세한 안내는 홈페이지에서 확인하세요]({homepage})")
-                md = "\n".join(ls)
-            elif occ > 1:
-                # 두 번째 이후 제거
-                pattern = re.compile(rf"\[.*?\]\({re.escape(homepage)}\)")
-                count = 0
-                def _keep_first(m):
-                    nonlocal count
-                    count += 1
-                    return m.group(0) if count == 1 else ""
-                md = pattern.sub(_keep_first, md)
-
-        # 안내 박스가 여러 번이면 모두 제거 후 맨 끝에 1회 재생성
-        md = re.sub(r"(?s)(?:^|\n)---\n\*\*안내\*\*.*?(?=\n---|\Z)", "", md, flags=re.MULTILINE)
-        info = {
-            "address": context.get("address",""),
-            "phone": context.get("phone",""),
-            "homepage": context.get("homepage",""),
-            "map_link": context.get("map_link",""),
-        }
-        if any(info.values()):
-            tail = ["", "---", "**안내**"]
-            if info["address"]: tail.append(f"- 주소: {info['address']}")
-            if info["phone"]:   tail.append(f"- 전화: {info['phone']}")
-            if info["homepage"]:tail.append(f"- 홈페이지: {info['homepage']}")
-            if info["map_link"]:tail.append(f"- 지도: {info['map_link']}")
-            tail.append("")
-            md = md.rstrip() + "\n" + "\n".join(tail)
-
-        # 금지어/과장 표현 간단 필터
-        for pat in [r"100%\s*완치", r"유일한\s*치료", r"부작용\s*없"]:
-            md = re.sub(pat, "", md, flags=re.I)
-
-        return md.strip() + "\n"
-
-    # 전체 생성
-    def generate(self, *, plan: Dict[str, Any], title: str,
-                 input_data: Dict[str, Any], n_candidates_each: int = 3) -> Dict[str, Any]:
-        section_keys = [k for k, _ in SECTION_FILES]
-
-        # 1) 섹션별 생성
-        sections_out: Dict[str, Dict[str, Any]] = {}
-        for key in section_keys:
-            sections_out[key] = self._gen_section(
-                key, title=title, plan=plan, input_data=input_data, N=n_candidates_each
-            )
-
-        # 2) 스티치 프롬프트로 한 편으로 통합
-        context = self._build_context(plan, title, input_data)
-        stitcher = Stitcher(self.prompts)
-        stitched_md = stitcher.stitch(title=title, context=context, sections_out=sections_out, plan=plan)
-
-        # 3) 로컬 후처리
-        final_md = self._postprocess_markdown(stitched_md, context)
-
-        return {
-            "sections": sections_out,
-            "stitched": {
-                "id": "stitched_v1",
-                "why_best": "Stitcher 통합 + 로컬 후처리",
-                "content_markdown": final_md
-            },
-            "context_used": context,
-            "title": title
-        }
-
-# ---------------- 저장 & 실행 ----------------
-def save_all(base_dir: Path, plan_path: str, title_path: str,
-             mode_label: str, result: Dict[str, Any]) -> None:
-    ts = now_str()
-    # 섹션 로그
-    write_json(base_dir / f"{ts}_content_sections_log.json", result.get("sections", {}))
-    # 합본 로그
-    meta = {
-        "mode": mode_label,
-        "plan_path": plan_path,
-        "title_path": title_path,
-        "ts": ts,
-        "selected_id": result.get("stitched", {}).get("id", "stitched_v1"),
-        "selected_len_words": len((result.get("stitched", {}).get("content_markdown","")).split()),
-    }
-    write_json(base_dir / f"{ts}_content_log.json", {
-        "meta": meta,
-        "stitched": result.get("stitched", {}),
-        "context_used": result.get("context_used", {}),
-        "title": result.get("title","")
-    })
-    # md 저장
-    md = (result.get("stitched") or {}).get("content_markdown","")
-    (base_dir / f"{ts}_content.md").write_text(md, encoding="utf-8")
-    # title + full content 저장
-    full_txt = (result.get("title","") or "").strip() + "\n\n" + md
-    (base_dir / f"{ts}_content_full.txt").write_text(full_txt, encoding="utf-8")
-    print(f"✅ 저장: {base_dir/(ts+'_content_sections_log.json')}")
-    print(f"✅ 저장: {base_dir/(ts+'_content_log.json')}")
-    print(f"✅ 저장: {base_dir/(ts+'_content.md')}")
-    print(f"✅ 저장: {base_dir/(ts+'_content_full.txt')}")
-
-def _load_required_logs(base_dir: Path) -> Tuple[Dict[str, Any], str, Dict[str, Any], Path, Path]:
-    plan_path  = latest_plan_log(base_dir)
-    title_path = latest_title_log(base_dir)
-    input_path = latest_input_log(base_dir)
-    if not plan_path:
-        raise FileNotFoundError(f"plan 로그가 없습니다: {base_dir}/*_plan_log.json")
-    if not title_path:
-        raise FileNotFoundError(f"title 로그가 없습니다: {base_dir}/*_title_log.json")
-    if not input_path:
-        raise FileNotFoundError(f"input 로그가 없습니다: {base_dir}/*_input_log.json")
-
-    plan  = read_json(plan_path)
-    title_obj = read_json(title_path)
-    input_data = read_json(input_path)
-
-    # title 추출: selected.title 우선
-    title = (title_obj.get("selected") or {}).get("title") \
-            or (title_obj.get("candidates", [{}])[0] or {}).get("title", "")
-    if not title:
-        raise ValueError("title 로그에서 제목을 찾지 못했습니다.")
-
-    return plan, title, input_data, plan_path, title_path
-
-def run_mode(base_dir: Path, mode_label: str) -> Optional[Dict[str, Any]]:
+def _file_hash_safe(p: str) -> Optional[str]:  # [NEW]
+    """
+    동일 파일이 경로만 다른 복사본일 수 있어, 해시를 우선 키로 사용(선택).
+    실패 시 None 반환하여 경로 기반으로 대체.
+    """
     try:
-        plan, title, input_data, plan_path, title_path = _load_required_logs(base_dir)
-    except Exception as e:
-        print("❌ 준비 오류:", e)
+        with open(p, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except Exception:
         return None
 
-    agent = ContentAgent()
-    result = agent.generate(plan=plan, title=title, input_data=input_data, n_candidates_each=3)
-    save_all(base_dir, str(plan_path), str(title_path), mode_label, result)
+def _dedup_key_for_image(im: Dict[str, str]) -> str:  # [NEW]
+    path = _norm_path(im.get("path", ""))
+    h = _file_hash_safe(path)
+    return f"hash:{h}" if h else f"path:{path}"
 
-    # 콘솔에도 TITLE + FULL CONTENT 출력
-    print("\n" + "="*80)
-    print("TITLE + FULL CONTENT")
-    print("="*80 + "\n")
-    print(result.get("title","").strip())
-    print()
-    print((result.get("stitched") or {}).get("content_markdown",""))
-    print("="*80 + "\n")
+def _limit_for_section(sec_key: str) -> int:  # [NEW]
+    return {
+        "1_intro": 1,
+        "2_visit": 2,
+        "3_inspection": 2,
+        "4_doctor_tip": 2,
+        "5_treatment": 6,
+        "6_check_point": 1,
+        "7_conclusion": 6,
+    }.get(sec_key, 2)
+
+_BEFORE_RE = re.compile(r"(?:^|[\s_\-])(전|before)(?:$|[\s_\-])", re.I)   # [NEW]
+_AFTER_RE  = re.compile(r"(?:^|[\s_\-])(후|after)(?:$|[\s_\-])", re.I)    # [NEW]
+
+def _pair_before_after(images: List[Dict[str, str]]) -> List[Dict[str, str]]:  # [NEW]
+    """
+    Q7 전/후 페어링 정렬: 파일명/alt에서 전/후 단서를 찾아 '전→후' 순으로 근접 배치
+    단순 휴리스틱: index 순서 유지하되, 전/후 후보를 분리 후 interleave
+    """
+    befores, afters, others = [], [], []
+    for im in images:
+        keyspace = f"{im.get('filename','')} {im.get('alt','')}"
+        if _BEFORE_RE.search(keyspace):
+            befores.append(im)
+        elif _AFTER_RE.search(keyspace):
+            afters.append(im)
+        else:
+            others.append(im)
+    paired: List[Dict[str, str]] = []
+    n = max(len(befores), len(afters))
+    for i in range(n):
+        if i < len(befores): paired.append(befores[i])
+        if i < len(afters):  paired.append(afters[i])
+    return paired + others
+
+def _dedup_and_limit_images(section_key: str,
+                            images: List[Dict[str, str]],
+                            used_keys: set) -> List[Dict[str, str]]:  # [NEW]
+    """
+    - inline 이미지는 렌더 대상 아님 → 배열에서 제외(로그는 별개)
+    - 전역 dedup(해시 우선, 실패 시 경로)
+    - 섹션별 상한 적용
+    - Q7은 전/후 페어링 정렬
+    """
+    # 0) inline 제외 (assemble에서 무시되지만 로그 혼입 방지)
+    filtered = [im for im in images if (im.get("position") or "").lower() != "inline"]
+
+    # 1) 전역 dedup
+    unique: List[Dict[str, str]] = []
+    for im in filtered:
+        # path 우선 설정(입력 path가 있으면 그걸 사용)
+        p = im.get("path") or ""
+        if not p and im.get("filename"):
+            p = f"test_data/test_image/{im['filename']}"
+            im["path"] = p
+
+        key = _dedup_key_for_image(im)
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        unique.append(im)
+
+    # 2) Q7 페어링
+    if section_key == "7_conclusion":
+        unique = _pair_before_after(unique)
+
+    # 3) 섹션별 상한
+    limit = _limit_for_section(section_key)
+    if len(unique) > limit:
+        unique = unique[:limit]
+
+    return unique
+
+# =========================
+# 이미지 바인딩 해석
+# =========================
+def _resolve_images_for_section(plan_sec: Dict[str, Any], input_row: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    확장 사항:
+    - 배열 소스에 random 선택 지원: image_binding 항목에 "random": true
+    - GIF 자동 선택 지원:
+        * image_binding 항목에 {"from":"gif_pool", "category":"행복", "position":"bottom", "animal":"토끼"} 등
+        * category 미지정 시 ["일반"] 시도, 섹션7(마무리)는 plan에서 category="마무리" 주길 권장
+        * animal 미지정 시 글 단위로 랜덤 1종 고정
+        * 여러 후보 카테고리를 시도하려면 "category_try": ["행복","일반"] 사용
+    - 기존 동작(명함/hospital.business_card, question*_images 배열)은 그대로 유지
+    """
+    binds = plan_sec.get("image_binding") or []
+    out: List[Dict[str, str]] = []
+
+    for b in binds:
+        src = b.get("from", "")
+        limit = int(b.get("limit", 1))
+        position = b.get("position", "top")
+
+        # 1) GIF 풀에서 선택 (감정/일반/마무리 등)
+        if src == "gif_pool":
+            # 풀 캐시 확보
+            pool = _SESSION.get("pool") or _scan_gif_pool()
+            _SESSION["pool"] = pool
+
+            # 동물 한 번 고정 (선호 동물이 오면 그걸 우선)
+            preferred_animal = b.get("animal")  # 예: "토끼" / "햄스터" 등
+            animal = _pick_animal_once(_SESSION, pool, preferred=preferred_animal)
+            if animal:
+                # 카테고리 후보: category_try > category > 기본 ["일반"]
+                cat_try = b.get("category_try") or []
+                if not cat_try:
+                    cat = (b.get("category") or "").strip()
+                    cat_try = [cat] if cat else ["일반"]
+
+                picked = None
+                for cat in cat_try:
+                    picked = _pick_gif_by(animal, cat, pool)  # ← 함수명 교정
+                    if picked:
+                        break
+
+                if picked:
+                    out.append({
+                        "filename": picked.name,
+                        "path": str(picked),
+                        "alt": f"{cat_try[0] if cat_try else '일반'} {animal} GIF",
+                        "position": position
+                    })
+            continue
+
+        # 2) 병원 명함 고정
+        if src == "hospital.business_card":
+            card = _get(input_row, "hospital.business_card", "")
+            if card:
+                out.append({
+                    "filename": card,
+                    "path": f"test_data/hospital_image/{card}" if Path(f"test_data/hospital_image/{card}").exists()
+                            else f"test_data/test_image/{card}",
+                    "alt": f"{_get(input_row,'hospital.name','')} 명함",
+                    "position": "bottom",
+                })
+            continue
+
+        # 3) 배열 소스 (visit/therapy/result 등)
+        keys = [k.strip() for k in src.split("|") if k.strip()]
+        arr = []
+        for k in keys:
+            val = _get(input_row, k, [])
+            if isinstance(val, list) and val:
+                arr = val
+                break
+        if not arr:
+            continue
+
+        # 랜덤 옵션: {"random": true}
+        is_random = bool(b.get("random", False))
+        chosen = (random.sample(arr, min(limit, len(arr))) if is_random else arr[:limit])
+
+        for it in chosen:
+            fn = it.get("filename", "")
+            alt = it.get("description", "") or "임상 이미지"
+            # [NEW] 입력에 path가 있으면 그대로 사용, 없으면 기존 규칙으로 구성
+            path = (it.get("path") or f"test_data/test_image/{fn}")
+            out.append({"filename": fn, "path": path, "alt": alt, "position": position})
+
+    return out
+
+
+# =========================
+# 섹션 생성
+# =========================
+SECTION_TITLE_MAP = {
+    "1_intro": "서론",
+    "2_visit": "내원·방문",
+    "3_inspection": "검사·진단",
+    "4_doctor_tip": "의료진 팁",
+    "5_treatment": "치료 과정",
+    "6_check_point": "체크포인트",
+    "7_conclusion": "마무리·결과",
+}
+
+def _build_ctx_vars(plan: Dict[str, Any], input_row: Dict[str, Any], title_obj: Dict[str, Any]) -> Dict[str, Any]:
+    city = _get(input_row, "city", "")
+    district = _get(input_row, "district", "")
+    region_phrase = (_get(input_row, "region_phrase", "") or f"{city} {district}".strip()).strip()
+    return {
+        "title": _get(title_obj, "selected.title", ""),
+        "hospital_name": _get(input_row, "hospital.name", ""),
+        "save_name": _get(input_row, "hospital.save_name", ""),
+        "city": city,
+        "district": district,
+        "region_phrase": region_phrase,
+        "category": _get(input_row, "category", ""),
+        "selected_symptom": _get(input_row, "selected_symptom", ""),
+        "selected_procedure": _get(input_row, "selected_procedure", ""),
+        "selected_treatment": _get(input_row, "selected_treatment", ""),
+        "tooth_numbers": ", ".join(_get(input_row, "tooth_numbers", []) or []),
+        "question1_concept": _get(input_row, "question1_concept", ""),
+        "question2_condition": _get(input_row, "question2_condition", ""),
+        "question4_treatment": _get(input_row, "question4_treatment", ""),
+        "question6_result": _get(input_row, "question6_result", ""),
+        "question8_extra": _get(input_row, "question8_extra", ""),
+        "representative_persona": _get(input_row, "representative_persona", ""),
+        "map_link": _get(input_row, "hospital.map_link", ""),
+    }
+
+def _build_section_prompt(sec_key: str, sec_plan: Dict[str, Any], base_ctx: Dict[str, Any]) -> str:
+    # 외부 프롬프트 + 컨텍스트(JSON) + 섹션 가이드(요약/금지/필수)
+    p_path = PROMPTS.get(sec_key)
+    prompt_txt = _read(p_path, default=f"[{sec_key}]에 대한 본문을 한국어로 작성하세요.")
+    prompt_txt = _render_template(prompt_txt, base_ctx)
+
+    guide = {
+        "section_key": sec_key,
+        "section_title": SECTION_TITLE_MAP.get(sec_key, sec_key),
+        "summary": sec_plan.get("summary", ""),
+        "must_include": sec_plan.get("must_include", []),
+        "may_include": sec_plan.get("may_include", []),
+        "must_not_include": sec_plan.get("must_not_include", []),
+        "style_rules": [
+            "의료광고법 위반 표현 금지(가격/이벤트/과장/단정/유일/무통증/완치 등).",
+            "정보제공 목적의 중립적 톤. 개인차/주의 유의미 암시.",
+            "같은 문장·메시지 반복 금지, 문장 길이·줄바꿈은 자연스럽게.",
+        ],
+        "format_rules": [
+            "불필요한 헤딩/번호 매기기 금지(프롬프트가 요구한 경우 제외).",
+            "이모지는 프롬프트가 요구한 경우에만 제한적으로 사용.",
+        ],
+    }
+    sys_dir = (
+      "You are a Korean medical blog writer. Follow all rules. "
+      "Return PLAIN TEXT only (no JSON, no backticks)."
+    )
+    final = f"{sys_dir}\n\nINSTRUCTION\n{prompt_txt}\n\nCONTEXT(JSON)\n{json.dumps(base_ctx, ensure_ascii=False, indent=2)}\n\nSECTION_GUIDE(JSON)\n{json.dumps(guide, ensure_ascii=False, indent=2)}\n\nWrite the section now:"
+    return final
+
+# =========================
+# 본문 조립
+# =========================
+def _assemble_markdown(sections_out: Dict[str, Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for k in ["1_intro","2_visit","3_inspection","4_doctor_tip","5_treatment","6_check_point","7_conclusion"]:
+        sec = sections_out.get(k)
+        if not sec: continue
+        imgs_top = [im for im in sec.get("images", []) if im.get("position") == "top"]
+        for im in imgs_top:
+            parts.append(f"![{im.get('alt','')}]({im.get('path','')})")
+        parts.append(sec.get("text", "").rstrip())
+        imgs_bottom = [im for im in sec.get("images", []) if im.get("position") == "bottom"]
+        for im in imgs_bottom:
+            parts.append(f"![{im.get('alt','')}]({im.get('path','')})")
+        parts.append("")  # 섹션 사이 공백줄
+    return "\n".join(parts).strip()
+
+# ===== 복붙용 변환 =====
+_IMG_MD_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+
+def _to_title_content_result(title: str, md: str) -> str:
+    """
+    - 첫 줄에 제목
+    - 공백 줄 1개
+    - 본문에서 ![ALT](PATH)를
+        (PATH)
+        [ALT]
+      로 변환
+    """
+    body = md or ""
+    def _img_repl(m: re.Match):
+        alt = (m.group(1) or "").strip()
+        path = (m.group(2) or "").strip()
+        pnorm = path.lower().replace("\\", "/")  # 경로 정규화
+        if pnorm.endswith(".gif") or "/test_data/test_image/gif/" in pnorm:
+            return f"\n({path})\n"
+        return f"\n({path})\n[{alt}]\n"
+
+    body = _IMG_MD_RE.sub(_img_repl, body)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    title_line = (title or "").strip()
+    if title_line:
+        return f"{title_line}\n\n{body}".strip()
+    return body
+
+# =========================
+# 저장
+# =========================
+def _save_json(mode: str, name: str, payload: dict) -> Path:
+    out_dir = Path(f"test_logs/{mode}/{_today()}")
+    _ensure_dir(out_dir)
+    p = out_dir / f"{_now()}_{name}.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return p
+
+# =========================
+# 실행
+# =========================
+def run(mode: str = DEF_MODE,
+        input_path: Optional[str|Path] = None,
+        plan_path: Optional[str|Path] = None,
+        title_path: Optional[str|Path] = None) -> Dict[str, Any]:
+
+    # 1) 입력 수집
+    if input_path:
+        inp_path = Path(input_path); inp_row = _json_load(inp_path)
+        if isinstance(inp_row, list) and inp_row: inp_row = inp_row[-1]
+        inp_src = str(inp_path)
+    else:
+        found_path, row = _latest_input(mode)
+        if row is None:
+            raise FileNotFoundError("최신 *_input_log(s).json을 찾지 못했습니다. 먼저 InputAgent를 실행하세요.")
+        inp_row, inp_src = row, str(found_path)
+
+    if plan_path:
+        plan = _json_load(Path(plan_path)); plan_src = plan_path
+    else:
+        p = _latest_plan(mode)
+        if not p: raise FileNotFoundError("최신 *_plan.json을 찾지 못했습니다. 먼저 PlanAgent를 실행하세요.")
+        plan = _json_load(p); plan_src = str(p)
+
+    if title_path:
+        title_obj = _json_load(Path(title_path)); title_src = title_path
+    else:
+        t = _latest_title(mode)
+        if not t: raise FileNotFoundError("최신 *_title.json을 찾지 못했습니다. 먼저 TitleAgent를 실행하세요.")
+        title_obj = _json_load(t); title_src = str(t)
+
+    # 2) 컨텍스트 준비
+    base_ctx = _build_ctx_vars(plan, inp_row, title_obj)
+    order = _get(plan, "content_plan.sections_order", []) or ["1_intro","2_visit","3_inspection","4_doctor_tip","5_treatment","6_check_point","7_conclusion"]
+    sections_plan: Dict[str, Any] = _get(plan, "content_plan.sections", {}) or {}
+
+    # 3) 섹션별 생성
+    sections_out: Dict[str, Dict[str, Any]] = {}
+    log_detail: Dict[str, Any] = {"sections": {}}
+
+    used_image_keys: set = set()  # [NEW] 전역 dedup 키 저장소
+
+    for k in order:
+        sec_plan = sections_plan.get(k, {})
+        prompt = _build_section_prompt(k, sec_plan, base_ctx)
+        raw = gem.generate(prompt)
+        text = _clean_output(raw)
+
+        # ✅ 이모티콘 마커 치환을 섹션별로 적용
+        text, emoticon_imgs = _inject_emoticons_inline(text, k)
+
+        # 후보 이미지 수집
+        images = _resolve_images_for_section(sec_plan, inp_row)
+
+        # 로그용 inline도 합치되, 렌더 중복 방지를 위해 dedup 단계에서 inline 제거
+        if emoticon_imgs:
+            images.extend(emoticon_imgs)
+
+        # [NEW] 전역 dedup + 섹션 상한 + Q7 전/후 페어링
+        images = _dedup_and_limit_images(k, images, used_image_keys)
+
+        sections_out[k] = {
+            "title": SECTION_TITLE_MAP.get(k, k),
+            "text": text,
+            "images": images
+        }
+        log_detail["sections"][k] = {
+            "prompt_path": str(PROMPTS.get(k, "")),
+            "prompt_rendered_preview": prompt[:1200],
+            "llm_raw_preview": raw[:1200],
+            "used_summary": sec_plan.get("summary", ""),
+            "resolved_images": images,
+        }
+
+    # 4) 최종 조립 → 복붙용 문자열 생성
+    md = _assemble_markdown(sections_out)
+    title_content_result = _to_title_content_result(base_ctx.get("title", ""), md)
+
+    # 5) 저장 (assembled_markdown에 복붙용 문자열을 저장하고, title_content_result 필드는 제거)
+    result = {
+        "meta": {
+            "mode": mode,
+            "timestamp": _now(),
+            "model": gem.model,
+            "temperature": gem.temperature,
+            "max_output_tokens": gem.max_output_tokens,
+            "plan_source": plan_src,
+            "input_source": inp_src,
+            "title_source": title_src,
+            "case_id": _get(inp_row, "case_id", ""),
+        },
+        "title": base_ctx.get("title", ""),
+        "sections": sections_out,
+        "assembled_markdown": title_content_result,  # ✅ 복붙용 문자열로 교체
+    }
+    out_path = _save_json(mode, "content", result)
+
+    # 동일 내용 TXT 저장
+    out_dir = out_path.parent
+    ts_prefix = out_path.stem.replace("_content", "")  # 예: 20250812_141055
+    txt_path = out_dir / f"{ts_prefix}_title_content_result.txt"
+    txt_path.write_text(title_content_result, encoding="utf-8")
+
+    # 로그
+    log = {
+        "meta": {
+            "mode": mode,
+            "timestamp": _now(),
+            "success": True,
+        },
+        "context_vars": base_ctx,
+        "output_paths": {
+            "content_path": str(out_path),
+            "title_content_txt": str(txt_path),
+        },
+        **log_detail,
+    }
+    log_path = _save_json(mode, "content_log", log)
+
+    print(f"✅ Content 저장: {out_path}")
+    print(f"🧾 로그 저장: {log_path}")
+    print(f"📝 복붙용 TXT 저장: {txt_path}")
     return result
 
-def run_test() -> Optional[Dict[str, Any]]:
-    base_dir = Path("test_logs/test")
-    return run_mode(base_dir, "test")
-
-def run_use() -> Optional[Dict[str, Any]]:
-    base_dir = Path("test_logs/use")
-    return run_mode(base_dir, "use")
-
-def run_latest_content_only(base_dir: Path) -> Optional[Dict[str, Any]]:
-    latest = latest_file_by_mtime(base_dir, "*_content_log.json")
-    if not latest:
-        print(f"⚠️ 최신 content 결과가 없습니다: {base_dir}/*_content_log.json")
-        meta = latest_file_by_mtime(base_dir, "*_content.json")
-        if meta:
-            print(f"ℹ️ 참고: 최신 메타 파일은 있습니다 → {meta.name}")
-        return None
-    obj = read_json(latest)
-    sel_md = (obj.get("stitched") or {}).get("content_markdown", "")
-    print(f"📄 최신 CONTENT: {latest.name}")
-    print("길이(단어수):", len(sel_md.split()))
-    return obj
-
-def main():
-    print("$ python agents/content_agent.py")
-    print("🧾 ContentAgent (7섹션+스티처) 시작\n")
-    print("모드:")
-    print("1) test        → 최신 plan/title/input 로그 기반 생성 + title+풀content 저장/출력")
-    print("2) use         → 최신 plan/title/input 로그 기반 생성 + title+풀content 저장/출력")
-    print("3) latest-view → 최신 content 로그 요약 보기(폴더 선택)")
-    sel = input("선택 (1/2/3): ").strip()
-    try:
-        if sel == "1":
-            run_test()
-        elif sel == "2":
-            run_use()
-        elif sel == "3":
-            which = input("폴더 선택 (1: test_logs/test, 2: test_logs/use): ").strip()
-            base = Path("test_logs/test") if which == "1" else Path("test_logs/use")
-            run_latest_content_only(base)
-        else:
-            print("⚠️ 잘못된 입력"); sys.exit(1)
-    except Exception as e:
-        print("❌ 오류:", e); sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser(description="ContentAgent — plan/title/input 기반 7섹션 본문 생성")
+    ap.add_argument("--mode", default=DEF_MODE, choices=["test","use"])
+    ap.add_argument("--input", default="", help="*_input_log(s).json 경로(미지정 시 최신)")
+    ap.add_argument("--plan",  default="", help="*_plan.json 경로(미지정 시 최신)")
+    ap.add_argument("--title", default="", help="*_title.json 경로(미지정 시 최신)")
+    args = ap.parse_args()
+
+    run(mode=args.mode,
+        input_path=(args.input or None),
+        plan_path=(args.plan or None),
+        title_path=(args.title or None))

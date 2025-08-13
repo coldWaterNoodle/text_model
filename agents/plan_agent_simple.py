@@ -25,7 +25,7 @@ genai.configure(api_key=API_KEY)
 # (선택) InputAgent
 try:
     sys.path.append(str(Path(".").resolve()))
-    from input_agent import InputAgent  # noqa
+    from agents.input_agent_old2 import InputAgent  # noqa
 except Exception:
     InputAgent = None
 

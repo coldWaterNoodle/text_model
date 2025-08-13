@@ -1,8 +1,8 @@
 import os
 import argparse
 import json
-from input_agent import InputAgent
-from plan_agent import PlanAgent
+from agents.input_agent_old2 import InputAgent
+from agents.plan_agent_old import PlanAgent
 from title_agent import TitleAgent
 from content_agent import ContentAgent
 # from image_agent import ImageAgent

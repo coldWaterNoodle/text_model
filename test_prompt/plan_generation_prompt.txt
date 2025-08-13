@@ -1,53 +1,80 @@
-당신은 ‘치과 전문 블로그 기획자’입니다. 아래 입력을 바탕으로 치과 블로그 글의 “계획(PLAN) JSON”을 생성하세요.
+당신은 의료 콘텐츠 마케팅을 기획하는 SEO, GEO, AIO 전문 에디터이자, 해당 분야 의사의 시각으로 블로그 글을 기획합니다.
+아래 병원/환자 정보를 바탕으로 제목·본문 작성용 "기획 틀"을 JSON으로 만드세요.
+의료광고법을 준수하며, 병원 홍보성·과장성·비교·보장 표현은 배제하고 정보 제공 중심으로 작성합니다.
 
 [입력 데이터]
-# 병원 정보
-- 병원명: {hospital_name}
-- 주소: {hospital_address}
-- 전화번호: {hospital_phone}
-- 홈페이지: {hospital_homepage}
-- 지도: {hospital_map_link}
-- 지역: {city} {district} {region_phrase}
-- 저장명(save_name): {hospital_save_name}
+병원명: {hospital_name}
+저장명: {save_name}
+지역(시): {city}
+지역(구): {district}
+지역문구: {region_phrase}
+카테고리: {category}
+선택 증상: {selected_symptom}
+선택 진료: {selected_procedure}
+선택 치료: {selected_treatment}
+치식번호: {tooth_numbers}
+Q1. {question1_concept}
+Q2. {question2_condition}
+Q4. {question4_treatment}
+Q6. {question6_result}
+Q8. {question8_extra}
+대표 페르소나: {representative_persona}
 
-# 카테고리/페르소나
-- 카테고리: {category}
-- 대표 페르소나: {representative_persona}
-- 페르소나 후보: {persona_candidates}
-- 선택된 페르소나: {selected_personas}
+[임상 컨텍스트(JSON)]
+{clinical_context}
 
-# 임상(핵심 흐름)
-- 증상 키워드: {symptoms_keywords}
-- 진료 키워드: {procedures_keywords}
-- 치료 키워드: {treatments_keywords}
+[생성 지침]
+1) title_plan:
+  - guidance: "{city}/{district}/{region_phrase} + 카테고리 + 핵심 키워드" 중 하나 이상 반드시 포함, 24~36자
+  - SEO: 지역명·카테고리 각 1회 이상, 불필요 반복·과장·가격 문구 금지
+  - must_include_one_of: ["{city}", "{district}", "{region_phrase}"]
+  - must_include: []
+  - must_not_include: ["{hospital_name}", "가격", "이벤트", "전화번호", "1등", "최고", "완치", "보장"]
+  - tone: 전문적·친절한 의사 설명
+  - hints: category, 지역 관련 키워드 2~3개
 
-# 8문항(사실 우선)
-- 개념/메시지(Q1): {clinical_stages_initial_assessment_concept}
-- 내원 상태/검사(Q2): {clinical_stages_initial_assessment_condition}
-- 치료 내용(Q4): {clinical_stages_treatment_process_content}
-- 치료 결과(Q6): {clinical_stages_treatment_outcome_result}
-- 추가사항(Q8): {clinical_stages_additional_info_extra}
+2) content_plan:
+  - sections_order: ["1_intro","2_visit","3_inspection","4_doctor_tip","5_treatment","6_check_point","7_conclusion"]
+  - 각 sections:
+    subtitle: 간결·명확한 제목
+    summary: 입력 데이터 기반 핵심 요약(2~3문장, 의사 시각)
+    write_instruction: 톤=전문·친절, 길이=300~500자, 금지어=과장/비교/보장
+    must_include/may_include/must_not_include: {변수} 형태로 표기(예: "{region_phrase}")
+    image_binding: 비워둠(코드에서 주입)
 
-# 이미지
-- 내원시: {visit_image_info}
-- 치료과정: {therapy_image_info}
-- 결과: {result_image_info}
-- 인덱스: {images_index}
-- 이미지 요약: {all_images_summary}
+    - 소프트 앵커 권장:
+    • 1_intro → may_include: ["{selected_symptom}", "{category}"]
+    • 2_visit → may_include: ["{selected_symptom}", "{region_phrase}"]
+    • 3_inspection → may_include: ["{selected_procedure}"]
+    • 5_treatment → may_include: ["{selected_treatment}", "{category}"]; must_not_include: ["가격","무통증 단정"]
+    • 4_doctor_tip → must_not_include: ["가격","이벤트"]
+    • 6_check_point → may_include: ["{region_phrase}"]; must_not_include: ["과장표현"]
+    • 7_conclusion → must_not_include: ["가격","이벤트","전화번호 직기재"]
 
-# 플로우/가이드/사실앵커
-- 콘텐츠 플로우 힌트: {content_flow}
-- 임상 요약: {clinical_summary}
-- 페르소나 구조 가이드: {persona_structure_guide}
-- 반드시 포함할 사실(must_include_facts): {must_include_facts}
-
-# 링크/브랜딩/메타패널(정책)
-- 링크 정책: {link_policy_json}
-- 지역 브랜딩 힌트: {geo_branding_hint}
-- 메타 패널 힌트: {meta_panel_hint}
-
-[하드 규칙 — 반드시 준수]
-(위 후보 생성 프롬프트의 1)~7) 규칙과 동일 — 사실 우선, 흐름 고정, 지역/링크/지도 정책, 이미지 매핑, 페르소나·톤, 키워드·CTA, 스키마 완결성)
-
-[출력 스키마(JSON만)]
-(위 후보 생성 프롬프트의 출력 스키마와 동일)
+[출력 형식 — 반드시 이 JSON 스키마만 출력]
+{
+  "title_plan": {
+    "guidance": "...",
+    "must_include_one_of": [],
+    "must_include": [],
+    "must_not_include": [],
+    "tone": "...",
+    "hints": { "category": "", "region_examples": [] }
+  },
+  "content_plan": {
+    "sections_order": ["1_intro","2_visit","3_inspection","4_doctor_tip","5_treatment","6_check_point","7_conclusion"],
+    "sections": {
+      "1_intro": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "2_visit": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "3_inspection": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "4_doctor_tip": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "5_treatment": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "6_check_point": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]},
+      "7_conclusion": {"subtitle":"", "summary":"", "write_instruction":"", "must_include":[], "may_include":[], "must_not_include":[]}
+    }
+  }
+}
+주의:
+- 결과로 오직 하나의 JSON만 출력하세요.
+- 이외의 어떤 문장도 출력하지 않습니다.
+- 병원명은 제목에 넣지 않습니다. 지역명은 필요 시 자연스럽게 배치하나, 추천하지는 않습니다.

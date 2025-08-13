@@ -48,5 +48,25 @@
     "map_link": "https://map.naver.com/v5/search/더좋은미소치과/place/11223344",
     "logo": null,
     "business_card": "smileplus_business_card.jpg"
-  }
+  },
+   {
+    "name": "내이튼치과의원",
+    "save_name": "naten",
+    "homepage": "https://natenclinic.com/",
+    "phone": "031-526-2246",
+    "address": "경기 화성시 동탄대로 537 라스플로레스 B동 507호",
+    "map_link": "https://map.naver.com/p/entry/place/1909897189?c=15.00,0,0,0,dh",
+    "logo": "naten_내이튼치과_logo.png",
+    "business_card": "naten_내이튼명함_business_card.jpg"
+  },
+   {
+    "name": "내이튼병원",
+    "save_name": "natent",
+    "homepage": "https://natentclinic.com/",
+    "phone": "031-526-2246",
+    "address": "서울시 송파구 송파동 100",
+    "map_link": "https://map.naver.com/p/entry/place/1909897189?c=15.00,0,0,0,dh",
+    "logo": null,
+    "business_card": null
+  } 
 ]
