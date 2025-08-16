@@ -21,7 +21,7 @@
 alt에는 이미지 설명을 간략히 작성합니다. 
 줄바꿈/강조/구글 이미지 참고 예시까지 모두 유사하게.
 
-{question3_visit_images} 이미지는 있지만 {visit_images} 설명이 없는 경우 해당 이미지는 사용하지 않습니다.
+{question3_visit_images} 이미지는 있지만 {visit_images}설명이 없는 경우 해당 이미지는 사용하지 않습니다.
 
 {question3_visit_images}로 입력받은 이미지가 하나도 없는 경우에는
 (어떤 이미지가 필요한지 작성)

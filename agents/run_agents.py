@@ -1,8 +1,8 @@
 import os
 import argparse
 import json
-from agents.input_agent_old2 import InputAgent
-from agents.plan_agent_old import PlanAgent
+from input_agent import InputAgent
+from plan_agent import PlanAgent
 from title_agent import TitleAgent
 from content_agent import ContentAgent
 # from image_agent import ImageAgent
@@ -47,10 +47,15 @@ def main():
     load_env(args.env)
 
     # 2. Input 데이터 준비
-    agent = InputAgent(case_num=args.test_case_num or "1")
-    input_data = agent.collect(mode=args.mode)
-    # 입력 로그 저장 (test->test/logs, use->use/logs)
-    agent.save_log(input_data, mode=args.mode)
+    agent = InputAgent()
+    if args.mode == "test":
+        input_data = agent.run_test()
+    else:  # use 모드
+        input_data = agent.run_use()
+    
+    if input_data is None:
+        print("입력 데이터 수집에 실패했습니다.")
+        return
 
     # test 모드일 때 터미널 출력
     if args.mode == 'test':

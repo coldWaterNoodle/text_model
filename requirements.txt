@@ -71,3 +71,7 @@ urllib3==2.5.0
 uvicorn==0.35.0
 watchfiles==1.1.0
 websockets==15.0.1
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.13.1
+kiwipiepy==0.21.0

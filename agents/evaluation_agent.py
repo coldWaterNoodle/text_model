@@ -46,7 +46,9 @@ DATA_DIR = ROOT / "test_data"
 
 EVAL_PROMPT_PATH = PROMPTS_DIR / "llm_evaluation_prompt.txt"
 REGEN_PROMPT_PATH = PROMPTS_DIR / "llm_regeneration_prompt.txt"
+SEO_PROMPT_PATH = PROMPTS_DIR / "seo_evaluation_prompt.txt"
 CRITERIA_PATH = DATA_DIR / "evaluation_criteria.json"
+SEO_CRITERIA_PATH = DATA_DIR / "seo_evaluation_criteria.json"
 DEFAULT_CSV_PATHS = [DATA_DIR / "medical_ad_checklist.csv", Path("/mnt/test_data/medical_ad_checklist.csv")]
 DEFAULT_REPORT_PATHS = [DATA_DIR / "medical-ad-report.md", Path("/mnt/test_data/medical-ad-report.md")]
 
@@ -56,6 +58,12 @@ CHECKLIST_NAMES = {
     5: "치료 전후 사진", 6: "전문의 허위 표시", 7: "환자 유인·알선", 8: "비의료인 의료광고",
     9: "객관적 근거 부족", 10: "비교 광고", 11: "기사형 광고", 12: "부작용 정보 누락",
     13: "인증·보증 허위표시", 14: "가격 정보 오표시", 15: "연락처 정보 오류",
+}
+
+SEO_CHECKLIST_NAMES = {
+    1: "제목 글자수 (공백 포함)", 2: "제목 글자수 (공백 제외)", 3: "본문 글자수 (공백 포함)",
+    4: "본문 글자수 (공백 제외)", 5: "총 형태소 개수", 6: "총 음절 개수",
+    7: "총 단어 개수", 8: "어뷰징 단어 개수", 9: "본문 이미지"
 }
 
 # ===== 리포트 가중치 (기본값) =====
@@ -83,6 +91,112 @@ BASE_PATTERNS = {
     14:[r"원\s*부터|최저가|할인\s*가", r"추가\s*비용|부가세"],
     15:[r"병원명|주소|전화|연락처", r"오류|불일치"],
 }
+
+# ===== SEO 메트릭 계산 (정제 유틸 추가) =====
+# --- SEO 측정 전용: 이미지 감지+정제 ---
+_IMG_EXT_RE = r'(?:jpg|jpeg|png|gif)'
+_MKDOWN_IMG_RE = re.compile(r'!\[[^\]]*\]\(([^)]+)\)', re.IGNORECASE)   # ![alt](url)
+_HTML_IMG_RE   = re.compile(r'<img\b[^>]*>', re.IGNORECASE)             # <img ...>
+_PAREN_IMG_RE  = re.compile(r'\(([^()\s]+?\.' + _IMG_EXT_RE + r')\)', re.IGNORECASE)  # (file.ext)
+
+def _extract_images_and_clean_text(raw: str) -> Tuple[str, int]:
+    """
+    - 이미지 개수: 마크다운/HTML/괄호형 파일명 3종을 합산 (중복 방지 위해 순차 제거)
+    - 정제 텍스트: 이미지 표현(마크다운/HTML/괄호형 파일명) 모두 제거,
+                  줄바꿈/탭→공백, 공백 다중 → 1칸으로 축약
+    """
+    if not isinstance(raw, str):
+        return "", 0
+
+    text = raw
+
+    # 1) 마크다운 이미지: 카운트 & 제거
+    md_hits = _MKDOWN_IMG_RE.findall(text)
+    text = _MKDOWN_IMG_RE.sub(' ', text)
+
+    # 2) HTML 이미지: 카운트 & 제거
+    html_hits = _HTML_IMG_RE.findall(text)
+    text = _HTML_IMG_RE.sub(' ', text)
+
+    # 3) 괄호형 파일명: 카운트 & 제거  e.g., (ab.png)
+    paren_hits = _PAREN_IMG_RE.findall(text)
+    text = _PAREN_IMG_RE.sub(' ', text)
+
+    # 4) 줄바꿈/탭 제거(→ 공백 1칸), 공백 다중 축약
+    text = text.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    image_count = len(md_hits) + len(html_hits) + len(paren_hits)
+    return text, image_count
+
+def _calculate_morphemes(text: str) -> int:
+    """형태소 개수 계산 (kiwipiepy 사용)"""
+    from kiwipiepy import Kiwi
+    kiwi = Kiwi()
+    result = kiwi.analyze(text)
+    tokens, score = result[0]
+    morphemes = [token.form for token in tokens]
+    return len(morphemes)
+
+def _count_syllables_extended(text: str) -> int:
+    """음절 개수 계산 (한글 + 영문)"""
+    import unicodedata
+    text = unicodedata.normalize('NFC', text)
+    syllables = 0
+    for ch in text:
+        if 0xAC00 <= ord(ch) <= 0xD7A3:  # 한글 완성형
+            syllables += 1
+        elif ch.isascii() and ch.isalpha():  # 영문만
+            syllables += 1
+    return syllables
+
+def calculate_seo_metrics(title: str, content: str) -> Dict[str, int]:
+    """SEO 평가용 실제 측정값 (렌더 결과 기준: 이미지/alt/파일명 제거, 줄바꿈 제외)"""
+    import re
+
+    # --- 제목(그대로) ---
+    title_with_space = len(title)
+    title_without_space = len(title.replace(" ", ""))
+
+    # --- 본문: 정제 + 이미지 카운트 ---
+    cleaned, image_count = _extract_images_and_clean_text(content)
+
+    # 3/4. 본문 글자수
+    content_with_space = len(cleaned)
+    content_without_space = len(re.sub(r'\s+', '', cleaned))  # 모든 공백 제거(개행 포함)
+
+    # 5. 형태소(정제 텍스트 기준)
+    morpheme_count = _calculate_morphemes(cleaned)
+
+    # 6. 음절(정제 텍스트 기준)
+    syllable_count = _count_syllables_extended(cleaned)
+
+    # 7. 단어(정제 텍스트 기준)
+    word_count = len(re.findall(r'[\w가-힣]+', cleaned))
+
+    # 8. 어뷰징 단어(정제 텍스트 기준)
+    abusing_patterns = [
+        r'19금', r'성인', r'유해', r'도박', r'불법', r'사기',
+        r'100%', r'완전무료', r'대박', r'짱', r'헐', r'1등', r'최고', r'최강', r'완벽', r'보장', r'완치', r'치료보장',
+        r'즉시', r'당일', r'바로', r'지금\s*당장', r'반드시', r'절대', r'무조건',
+        r'전부', r'전세계', r'국내유일', r'독점', r'유일무이', r'베스트', r'프리미엄',
+        r'명품', r'초특가', r'파격', r'무료', r'공짜', r'할인', r'이벤트', r'사은품',
+        r'한정', r'마감임박', r'재고소진', r'선착순', r'단독', r'최초', r'유일',
+        r'완전', r'필수', r'강력추천'
+    ]
+    abusing_count = sum(len(re.findall(pat, cleaned, re.IGNORECASE)) for pat in abusing_patterns)
+
+    return {
+        1: title_with_space,
+        2: title_without_space,
+        3: content_with_space,
+        4: content_without_space,
+        5: morpheme_count,
+        6: syllable_count,
+        7: word_count,
+        8: abusing_count,
+        9: image_count
+    }
 
 # ===== 유틸 =====
 def _nowstamp() -> str:
@@ -228,9 +342,14 @@ def _extract_title_content(clog: Dict[str, Any]) -> Tuple[str, str, Dict[str, An
         cand_titles.sort(key=lambda x: x[2], reverse=True)
         title_path, title, _ = cand_titles[0]
     else:
-        for k in ["title","Title","post_title"]:
-            if isinstance(clog.get(k), str) and clog[k].strip():
-                title = clog[k].strip(); title_path = k; break
+        # 제목 로그 파일의 selected.title 확인
+        if isinstance(clog.get("selected"), dict) and isinstance(clog["selected"].get("title"), str):
+            title = clog["selected"]["title"].strip()
+            title_path = "selected.title"
+        else:
+            for k in ["title","Title","post_title"]:
+                if isinstance(clog.get(k), str) and clog[k].strip():
+                    title = clog[k].strip(); title_path = k; break
     content, content_path = "", ""
     if cand_contents:
         cand_contents.sort(key=lambda x: (x[2] >= 300, x[2]), reverse=True)
@@ -277,7 +396,7 @@ def compile_patterns(rows: List[Dict[str,str]]) -> Dict[int, List[re.Pattern]]:
             continue
         p_list = BASE_PATTERNS.get(idx, []).copy()
         eval_method = (r.get("평가방법") or "").replace("<br>", "\n")
-        # 키워드 후보 추출(간단): 한글/영문 숫자/특수 토큰 중 의미 단어만
+        # 키워드 후보 추출(간단)
         for kw in ["최고","유일","완전","100%","부작용 없음","이벤트","할인","전후","before","after",
                    "리뷰","후기","협찬","가격","원부터","심의번호","전문의","전문병원","주의사항","부작용","개인차",
                    "인증","상장","감사장","추천","기사형","보도자료","인터뷰","타 병원","최초","유일"]:
@@ -326,8 +445,6 @@ def parse_report_weights(md_path: Path) -> Dict[str, float]:
                 in_table = True
                 continue
             if in_table:
-                if ln.strip().startswith("| 1 ") or ln.strip().startswith("| 1|") or "| 1 |" in ln:
-                    pass
                 if ln.strip().startswith("|------"):
                     continue
                 if not ln.strip().startswith("|"):
@@ -350,10 +467,15 @@ def parse_report_weights(md_path: Path) -> Dict[str, float]:
     except Exception:
         return DEFAULT_REPORT_WEIGHTS
 
-def weighted_total(final_scores: Dict[str,int], weights: Dict[str,float]) -> float:
-    num = sum((final_scores.get(k,0)/5.0) * weights[k] for k in weights)
-    den = sum(weights.values())
-    return round((num/den)*100, 1) if den else 0.0
+def weighted_total(final_scores: Dict[str,int], weights: Dict[str,float], evaluation_mode: str = "medical") -> float:
+    if evaluation_mode == "seo":
+        # SEO 모드: 실제 점수의 합계를 그대로 사용
+        return round(sum(final_scores.get(str(i), 0) for i in range(1, 10)), 1)
+    else:
+        # 의료법 모드: 기존 방식 (5점 만점 기준)
+        num = sum((final_scores.get(k,0)/5.0) * weights[k] for k in weights)
+        den = sum(weights.values())
+        return round((num/den)*100, 1) if den else 0.0
 
 # ===== 임계 비교 =====
 def over_threshold(scores: Dict[str, int], criteria: Dict[str, Dict[str, int]], mode: str) -> List[int]:
@@ -406,8 +528,76 @@ def apply_patches(title: str, content: str, patch_obj: Dict[str, Any]) -> Tuple[
     return new_title, new_content
 
 # ===== 프롬프트 빌드 =====
-def build_eval_prompt(title: str, content: str) -> str:
-    base = _read_text(EVAL_PROMPT_PATH)
+def build_eval_prompt(title: str, content: str, prompt_path: Path = EVAL_PROMPT_PATH, seo_metrics: Dict[int, int] = None) -> str:
+    base = _read_text(prompt_path)
+
+    # SEO 모드에서 실제 측정값과 정답을 프롬프트에 포함
+    if seo_metrics and "seo_evaluation_prompt" in str(prompt_path):
+        # 각 항목별 정확한 점수 계산
+        def get_correct_score(item_num, value):
+            if item_num == 1:  # 제목 글자수 (공백 포함)
+                if 26 <= value <= 48: return 12
+                elif 49 <= value <= 69: return 9
+                elif 15 <= value <= 25: return 6
+                else: return 3
+            elif item_num == 2:  # 제목 글자수 (공백 제외)
+                if 15 <= value <= 30: return 12
+                elif 31 <= value <= 56: return 9
+                elif 10 <= value <= 14: return 6
+                else: return 3
+            elif item_num == 3:  # 본문 글자수 (공백 포함)
+                if 1233 <= value <= 2628: return 15
+                elif 2629 <= value <= 4113: return 12
+                elif 612 <= value <= 1232: return 9
+                else: return 5
+            elif item_num == 4:  # 본문 글자수 (공백 제외)
+                if 936 <= value <= 1997: return 15
+                elif 1998 <= value <= 3400: return 12
+                elif 512 <= value <= 935: return 9
+                else: return 5
+            elif item_num == 5:  # 총 형태소 개수
+                if 249 <= value <= 482: return 10
+                elif 483 <= value <= 672: return 8
+                elif 183 <= value <= 248: return 6
+                else: return 3
+            elif item_num == 6:  # 총 음절 개수
+                if 298 <= value <= 632: return 10
+                elif 633 <= value <= 892: return 8
+                elif 184 <= value <= 297: return 6
+                else: return 3
+            elif item_num == 7:  # 총 단어 개수
+                if 82 <= value <= 193: return 10
+                elif 194 <= value <= 284: return 8
+                elif 54 <= value <= 81: return 6
+                else: return 3
+            elif item_num == 8:  # 어뷰징 단어 개수
+                if 0 <= value <= 7: return 8
+                elif 8 <= value <= 14: return 6
+                elif 15 <= value <= 21: return 4
+                else: return 2
+            elif item_num == 9:  # 본문 이미지
+                if 3 <= value <= 11: return 8
+                elif 4 <= value <= 11: return 6
+                elif 4 <= value <= 11: return 4
+                else: return 2
+            return 0
+
+        metrics_text = f"""
+
+실제 측정값과 정답:
+1. 제목 글자수 (공백 포함): {seo_metrics.get(1, 0)}글자 → {get_correct_score(1, seo_metrics.get(1, 0))}점
+2. 제목 글자수 (공백 제외): {seo_metrics.get(2, 0)}글자 → {get_correct_score(2, seo_metrics.get(2, 0))}점  
+3. 본문 글자수 (공백 포함): {seo_metrics.get(3, 0)}글자 → {get_correct_score(3, seo_metrics.get(3, 0))}점
+4. 본문 글자수 (공백 제외): {seo_metrics.get(4, 0)}글자 → {get_correct_score(4, seo_metrics.get(4, 0))}점
+5. 총 형태소 개수: {seo_metrics.get(5, 0)}개 → {get_correct_score(5, seo_metrics.get(5, 0))}점
+6. 총 음절 개수: {seo_metrics.get(6, 0)}개 → {get_correct_score(6, seo_metrics.get(6, 0))}점
+7. 총 단어 개수: {seo_metrics.get(7, 0)}개 → {get_correct_score(7, seo_metrics.get(7, 0))}점
+8. 어뷰징 단어 개수: {seo_metrics.get(8, 0)}개 → {get_correct_score(8, seo_metrics.get(8, 0))}점
+9. 본문 이미지: {seo_metrics.get(9, 0)}개 → {get_correct_score(9, seo_metrics.get(9, 0))}점
+
+위의 정답 점수를 그대로 사용하세요! 다른 점수를 부여하지 마세요!"""
+        base = base + metrics_text
+
     enforce = "\n\n반드시 위의 출력 형식의 JSON만 출력하고, 추가 설명은 쓰지 마십시오."
     return base.replace("[여기에 제목 입력]", title).replace("[여기에 본문 입력]", content) + enforce
 
@@ -446,7 +636,7 @@ def regen_fit_score(before_over: List[int], after_over: List[int],
     b = len(before_over); a = len(after_over)
     risk_reduction = (b - a) / b if b else 1.0
 
-    # 2) 권고 반영율: 힌트 키워드 → after 텍스트 존재/삭제 평가
+    # 2) 권고 반영율
     adherence_checks = []
     for t in tips:
         t = str(t)
@@ -459,8 +649,6 @@ def regen_fit_score(before_over: List[int], after_over: List[int],
 
         if key:
             pats = RISK_KEYWORDS[key]
-            # 부작용/가격/근거는 after에 '존재'해야 +,
-            # 유인삭제/과장완화는 before에는 있었으나 after에서 감소하면 +
             if key in ["부작용","가격고지","근거제시"]:
                 adherence_checks.append(_presence_rate(after_text, pats))
             else:
@@ -470,7 +658,7 @@ def regen_fit_score(before_over: List[int], after_over: List[int],
 
     guideline_adherence = sum(adherence_checks)/len(adherence_checks) if adherence_checks else 0.0
 
-    # 3) 흐름 안정성: 문단/문장 길이 변화, 공백 라인 비율 등 간단 지표
+    # 3) 흐름 안정성
     def stats(s: str):
         paras = [p for p in s.split("\n\n") if p.strip()]
         sents = re.split(r"[.!?]\s+|[.\n]\s+", s)
@@ -481,12 +669,11 @@ def regen_fit_score(before_over: List[int], after_over: List[int],
             "chars": chars or 1
         }
     sb = stats(before_text); sa = stats(after_text)
-    # 변화율(절대 편차가 작을수록 안정)
+
     def stable_ratio(a,b): return max(0.0, 1.0 - abs(a-b)/max(a,1))
     flow = 0.5*stable_ratio(sa["paras"], sb["paras"]) + 0.3*stable_ratio(sa["sents"], sb["sents"]) + 0.2*stable_ratio(sa["chars"], sb["chars"])
     flow = max(0.0, min(flow, 1.0))
 
-    # 최종 0~100
     final = round((0.5*risk_reduction + 0.3*guideline_adherence + 0.2*flow)*100)
     return {
         "risk_reduction_rate": round(risk_reduction, 3),
@@ -503,7 +690,8 @@ def run(criteria_mode: str = "표준",
         pattern: Union[str, None] = None,
         debug: bool = False,
         csv_path: Union[str, None] = None,
-        report_path: Union[str, None] = None):
+        report_path: Union[str, None] = None,
+        evaluation_mode: str = "medical"):
 
     # 로그 디렉토리
     log_dir_path = Path(log_dir) if log_dir else DEFAULT_LOG_DIR
@@ -517,6 +705,9 @@ def run(criteria_mode: str = "표준",
         "*_content_log.json",
         "*_Content.json",
         "*_CONTENT.json",
+        "*_title_log.json",
+        "*title*.json",
+        "*_title.json",
     ]
 
     # 0) 입력 로드
@@ -525,27 +716,48 @@ def run(criteria_mode: str = "표준",
     title, content, dbg = _extract_title_content(clog)
     if debug:
         _write_json(log_dir_path / f"{_nowstamp()}_debug_title_content.json", {"source": content_path.name, **dbg})
-    if not title or not content:
+    if not title:
         top_keys = sorted(list(clog.keys()))
         raise ValueError(
-            f"{content_path.name}에서 title/content를 찾을 수 없습니다.\n"
+            f"{content_path.name}에서 title을 찾을 수 없습니다.\n"
             f"- 디버그: {dbg}\n- 최상위 키: {top_keys}"
         )
 
-    # 1) 기준/CSV/리포트 가중치 로드
-    criteria = _read_json(CRITERIA_PATH)
-    csv_file = Path(csv_path) if csv_path else _find_existing(DEFAULT_CSV_PATHS)
-    rows = load_checklist_csv(csv_file)
-    pats = compile_patterns(rows)
-    report_file = Path(report_path) if report_path else _find_existing(DEFAULT_REPORT_PATHS)
-    weights = parse_report_weights(report_file)
+    # 콘텐츠가 없으면 더미 콘텐츠 사용
+    if not content:
+        content = "제목 평가용 더미 콘텐츠입니다."
 
-    # 2) 규칙 기반 사전 스코어
-    rule_all = rule_score_all(title, content, pats)
+    # SEO 모드에서 실제 측정값 계산 (정제 적용)
+    seo_metrics = {}
+    if evaluation_mode == "seo":
+        seo_metrics = calculate_seo_metrics(title, content)
+
+    # 1) 기준/CSV/리포트 가중치 로드
+    if evaluation_mode == "seo":
+        criteria = _read_json(SEO_CRITERIA_PATH)
+        eval_prompt_path = SEO_PROMPT_PATH
+    else:
+        criteria = _read_json(CRITERIA_PATH)
+        eval_prompt_path = EVAL_PROMPT_PATH
+    if evaluation_mode == "medical":
+        csv_file = Path(csv_path) if csv_path else _find_existing(DEFAULT_CSV_PATHS)
+        rows = load_checklist_csv(csv_file)
+        pats = compile_patterns(rows)
+        report_file = Path(report_path) if report_path else _find_existing(DEFAULT_REPORT_PATHS)
+        weights = parse_report_weights(report_file)
+        # 2) 규칙 기반 사전 스코어
+        rule_all = rule_score_all(title, content, pats)
+    else:
+        # SEO 모드에서는 규칙 기반 평가 건너뛰기
+        rule_all = {}
+        weights = {str(i): 1.0 for i in range(1, 10)}  # SEO는 9개 항목
 
     # 3) LLM 평가
     model = _setup_llm()
-    eval_prompt = build_eval_prompt(title, content)
+    if evaluation_mode == "seo":
+        eval_prompt = build_eval_prompt(title, content, eval_prompt_path, seo_metrics)
+    else:
+        eval_prompt = build_eval_prompt(title, content, eval_prompt_path)
     result = _call_llm(model, eval_prompt)
     llm_scores: Dict[str, int] = result.get("평가결과", {}) or {}
     analysis: str = result.get("상세분석", "") or ""
@@ -563,7 +775,7 @@ def run(criteria_mode: str = "표준",
 
     # 4) 판정/가중 총점
     violations_before = over_threshold(final_scores, criteria, criteria_mode)
-    weighted_total_before = weighted_total(final_scores, weights)
+    weighted_total_before = weighted_total(final_scores, weights, evaluation_mode)
 
     history: List[Dict[str, Any]] = []
     loop = 0
@@ -585,12 +797,17 @@ def run(criteria_mode: str = "표준",
         if not violations_before or loop >= max_loops:
             # 최종 산출 JSON
             out = {
-                "input": {"source_log": content_path.name, "title": title, "content_len": len(content)},
+                "input": {
+                    "source_log": content_path.name,
+                    "title": title,
+                    "content": content,
+                    "content_len": len(content)
+                },
                 "modes": {"criteria": criteria_mode},
                 "scores": {
                     "by_item": {
                         str(i): {
-                            "name": CHECKLIST_NAMES[i],
+                            "name": (SEO_CHECKLIST_NAMES[i] if evaluation_mode == "seo" else CHECKLIST_NAMES[i]),
                             "rule_score": int(rule_all.get(str(i),{}).get("score",0)),
                             "llm_score": int(llm_scores.get(str(i),0)),
                             "final_score": int(final_scores.get(str(i),0)),
@@ -598,16 +815,17 @@ def run(criteria_mode: str = "표준",
                             "passed": int(final_scores.get(str(i),0)) <= criteria[criteria_mode].get(str(i),5),
                             "evidence": {
                                 "regex_hits": rule_all.get(str(i),{}).get("hits",[]),
-                            }
-                        } for i in range(1,16)
+                            },
+                            **({"actual_value": seo_metrics.get(i, 0)} if evaluation_mode == "seo" else {})
+                        } for i in range(1, 10 if evaluation_mode == "seo" else 16)
                     },
                     "weighted_total": weighted_total_before,
-                    "llm_total_raw": sum(int(llm_scores.get(str(i),0)) for i in range(1,16)),
-                    "rule_total_proxy": sum(int(rule_all.get(str(i),{}).get("score",0)) for i in range(1,16))
+                    "llm_total_raw": sum(int(llm_scores.get(str(i),0)) for i in range(1, 10 if evaluation_mode == "seo" else 16)),
+                    "rule_total_proxy": sum(int(rule_all.get(str(i),{}).get("score",0)) for i in range(1, 10 if evaluation_mode == "seo" else 16))
                 },
                 "violations": {
                     "over_threshold": violations_before,
-                    "names": [CHECKLIST_NAMES[i] for i in violations_before]
+                    "names": [(SEO_CHECKLIST_NAMES[i] if evaluation_mode == "seo" else CHECKLIST_NAMES[i]) for i in violations_before]
                 },
                 "regen_fit": {
                     "applied": patched_once
@@ -622,9 +840,6 @@ def run(criteria_mode: str = "표준",
 
             # 재생성이 있었으면 적합도 계산
             if patched_once:
-                # after 재평가(마지막 루프 상태가 이미 after임)
-                # 이미 final_scores/violations_before가 after 기준으로 갱신되어 있을 수 있으니
-                # 첫 루프 기준 보관 → history[0]
                 b_over = history[0]["violations"]
                 a_over = violations_before
                 before_text = f"{title_before}\n\n{content_before}"
@@ -661,8 +876,14 @@ def run(criteria_mode: str = "표준",
         patched_once = True
 
         # 재평가 사이클: 규칙 + LLM 다시
-        rule_all = rule_score_all(title, content, pats)
-        eval_prompt = build_eval_prompt(title, content)
+        if evaluation_mode == "medical":
+            rule_all = rule_score_all(title, content, pats)
+        else:
+            rule_all = {}
+        if evaluation_mode == "seo":
+            eval_prompt = build_eval_prompt(title, content, eval_prompt_path, seo_metrics)
+        else:
+            eval_prompt = build_eval_prompt(title, content, eval_prompt_path)
         result = _call_llm(model, eval_prompt)
         llm_scores = result.get("평가결과", {}) or {}
         analysis = result.get("상세분석", "") or ""
@@ -670,7 +891,7 @@ def run(criteria_mode: str = "표준",
         final_scores = {str(i): max(int(rule_all.get(str(i),{}).get("score",0)),
                                     int(llm_scores.get(str(i),0))) for i in range(1,16)}
         violations_before = over_threshold(final_scores, criteria, criteria_mode)
-        weighted_total_before = weighted_total(final_scores, weights)
+        weighted_total_before = weighted_total(final_scores, weights, evaluation_mode)
         # 다음 루프
 
 # ===== CLI =====
@@ -681,9 +902,10 @@ if __name__ == "__main__":
     parser.add_argument("--auto-yes", action="store_true")
     parser.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR), help="로그 디렉토리(기본: test_logs/test)")
     parser.add_argument("--pattern", default="", help="탐색 패턴(쉼표로 여러 개). 비우면 기본 패턴 리스트 사용")
-    parser.add_argument("--debug", action="store_true", help="추출 후보/경로 디버그 로그 저장")
     parser.add_argument("--csv-path", default="", help="medical_ad_checklist.csv 경로(미지정 시 기본 경로/ /mnt/data 탐색)")
     parser.add_argument("--report-path", default="", help="medical-ad-report.md 경로(미지정 시 기본 경로/ /mnt/data 탐색)")
+    parser.add_argument("--debug", action="store_true", help="추출 후보/경로 디버그 로그 저장")
+    parser.add_argument("--evaluation-mode", default="medical", choices=["medical", "seo"], help="평가 모드 (medical: 의료법, seo: SEO 품질)")
     args = parser.parse_args()
 
     run(criteria_mode=args.criteria,
@@ -693,4 +915,5 @@ if __name__ == "__main__":
         pattern=args.pattern,
         debug=args.debug,
         csv_path=(args.csv_path or None),
-        report_path=(args.report_path or None))
+        report_path=(args.report_path or None),
+        evaluation_mode=args.evaluation_mode)
